@@ -2543,6 +2543,22 @@ private:
 		return 1;
 	}
 
+
+	// EnvRef:get_ground_level(pos)
+	static int l_get_ground_level(lua_State *L)
+	{
+		//infostream<<"EnvRef::l_get_ground_level()"<<std::endl;
+		EnvRef *o = checkobject(L, 1);
+		ServerEnvironment *env = o->m_env;
+		if(env == NULL) return 0;
+		// pos
+		v3s16 pos3d = read_v3s16(L, 2);
+		v2s16 pos2d = v2s16(pos3d.X, pos3d.Z);
+		s16 groundheight = env->getServerMap().findGroundLevel(pos2d);
+		lua_pushnumber(L, groundheight);
+		return 1;
+	}
+
 	static int gc_object(lua_State *L) {
 		EnvRef *o = *(EnvRef **)(lua_touserdata(L, 1));
 		delete o;
@@ -2620,6 +2636,7 @@ const luaL_reg EnvRef::methods[] = {
 	method(EnvRef, get_meta),
 	method(EnvRef, get_player_by_name),
 	method(EnvRef, get_objects_inside_radius),
+	method(EnvRef, get_ground_level),
 	{0,0}
 };
 

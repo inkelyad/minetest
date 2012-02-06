@@ -159,7 +159,6 @@ function minetest.get_node_drops(nodename, toolname)
 	local drop = ItemStack({name=nodename}):get_definition().drop
 	if drop == nil then
 		-- default drop
-		print("default drop: " .. nodename)
 		return {ItemStack({name=nodename})}
 	elseif type(drop) == "string" then
 		-- itemstring drop
@@ -360,6 +359,7 @@ minetest.nodedef_default = {
 	type="node",
 	-- name intentionally not defined here
 	description = "",
+	groups = {},
 	inventory_image = "",
 	wield_image = "",
 	wield_scale = {x=1,y=1,z=1},
@@ -419,6 +419,7 @@ minetest.craftitemdef_default = {
 	type="craft",
 	-- name intentionally not defined here
 	description = "",
+	groups = {},
 	inventory_image = "",
 	wield_image = "",
 	wield_scale = {x=1,y=1,z=1},
@@ -436,6 +437,7 @@ minetest.tooldef_default = {
 	type="tool",
 	-- name intentionally not defined here
 	description = "",
+	groups = {},
 	inventory_image = "",
 	wield_image = "",
 	wield_scale = {x=1,y=1,z=1},
@@ -453,6 +455,7 @@ minetest.noneitemdef_default = {  -- This is used for the hand and unknown items
 	type="none",
 	-- name intentionally not defined here
 	description = "",
+	groups = {},
 	inventory_image = "",
 	wield_image = "",
 	wield_scale = {x=1,y=1,z=1},

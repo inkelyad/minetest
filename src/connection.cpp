@@ -463,7 +463,7 @@ void Peer::reportRTT(float rtt)
 {
 	if(rtt >= 0.0){
 		if(rtt < 0.01){
-			if(m_max_packets_per_second < 100)
+			if(m_max_packets_per_second < 400)
 				m_max_packets_per_second += 10;
 		} else if(rtt < 0.2){
 			if(m_max_packets_per_second < 100)
@@ -537,6 +537,14 @@ Connection::Connection(u32 protocol_id, u32 max_packet_size, float timeout,
 Connection::~Connection()
 {
 	stop();
+	// Delete peers
+	for(core::map<u16, Peer*>::Iterator
+			j = m_peers.getIterator();
+			j.atEnd() == false; j++)
+	{
+		Peer *peer = j.getNode()->getValue();
+		delete peer;
+	}
 }
 
 /* Internal stuff */
@@ -986,8 +994,16 @@ nextpeer:
 void Connection::serve(u16 port)
 {
 	dout_con<<getDesc()<<" serving at port "<<port<<std::endl;
-	m_socket.Bind(port);
-	m_peer_id = PEER_ID_SERVER;
+	try{
+		m_socket.Bind(port);
+		m_peer_id = PEER_ID_SERVER;
+	}
+	catch(SocketException &e){
+		// Create event
+		ConnectionEvent ce;
+		ce.bindFailed();
+		putEvent(ce);
+	}
 }
 
 void Connection::connect(Address address)
@@ -1597,6 +1613,9 @@ u32 Connection::Receive(u16 &peer_id, SharedBuffer<u8> &data)
 			if(m_bc_peerhandler)
 				m_bc_peerhandler->deletingPeer(&tmp, e.timeout);
 			continue; }
+		case CONNEVENT_BIND_FAILED:
+			throw ConnectionBindFailed("Failed to bind socket "
+					"(port already in use?)");
 		}
 	}
 	throw NoIncomingDataException("No incoming data");

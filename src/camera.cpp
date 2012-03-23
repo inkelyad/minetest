@@ -22,12 +22,14 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "client.h"
 #include "main.h" // for g_settings
 #include "map.h"
+#include "clientmap.h" // MapDrawControl
 #include "mesh.h"
 #include "player.h"
 #include "tile.h"
 #include <cmath>
 #include "settings.h"
 #include "itemdef.h" // For wield visualization
+#include "noise.h" // easeCurve
 
 Camera::Camera(scene::ISceneManager* smgr, MapDrawControl& draw_control):
 	m_smgr(smgr),
@@ -182,7 +184,8 @@ void Camera::step(f32 dtime)
 	}
 }
 
-void Camera::update(LocalPlayer* player, f32 frametime, v2u32 screensize)
+void Camera::update(LocalPlayer* player, f32 frametime, v2u32 screensize,
+		f32 tool_reload_ratio)
 {
 	// Set player node transformation
 	m_playernode->setPosition(player->getPosition());
@@ -267,8 +270,25 @@ void Camera::update(LocalPlayer* player, f32 frametime, v2u32 screensize)
 	m_cameranode->setFOV(m_fov_y);
 
 	// Position the wielded item
-	v3f wield_position = v3f(45, -35, 65);
+	//v3f wield_position = v3f(45, -35, 65);
+	v3f wield_position = v3f(55, -35, 65);
+	//v3f wield_rotation = v3f(-100, 120, -100);
 	v3f wield_rotation = v3f(-100, 120, -100);
+	if(m_digging_anim < 0.05 || m_digging_anim > 0.5){
+		f32 frac = 1.0;
+		if(m_digging_anim > 0.5)
+			frac = 2.0 * (m_digging_anim - 0.5);
+		// This value starts from 1 and settles to 0
+		f32 ratiothing = pow((1.0f - tool_reload_ratio), 0.5f);
+		//f32 ratiothing2 = pow(ratiothing, 0.5f);
+		f32 ratiothing2 = (easeCurve(ratiothing*0.5))*2.0;
+		wield_position.Y -= frac * 25.0 * pow(ratiothing2, 1.7f);
+		//wield_position.Z += frac * 5.0 * ratiothing2;
+		wield_position.X -= frac * 35.0 * pow(ratiothing2, 1.1f);
+		wield_rotation.Y += frac * 70.0 * pow(ratiothing2, 1.4f);
+		//wield_rotation.X -= frac * 15.0 * pow(ratiothing2, 1.4f);
+		//wield_rotation.Z += frac * 15.0 * pow(ratiothing2, 1.0f);
+	}
 	if (m_digging_button != -1)
 	{
 		f32 digfrac = m_digging_anim;
@@ -347,6 +367,20 @@ void Camera::updateViewingRange(f32 frametime_in)
 
 	f32 viewing_range_max = g_settings->getS16("viewing_range_nodes_max");
 	viewing_range_max = MYMAX(viewing_range_min, viewing_range_max);
+	
+	// Immediately apply hard limits
+	if(m_draw_control.wanted_range < viewing_range_min)
+		m_draw_control.wanted_range = viewing_range_min;
+	if(m_draw_control.wanted_range > viewing_range_max)
+		m_draw_control.wanted_range = viewing_range_max;
+
+	// Just so big a value that everything rendered is visible
+	// Some more allowance than viewing_range_max * BS because of clouds,
+	// active objects, etc.
+	if(viewing_range_max < 200*BS)
+		m_cameranode->setFarValue(200 * BS * 10);
+	else
+		m_cameranode->setFarValue(viewing_range_max * BS * 10);
 
 	f32 wanted_fps = g_settings->getFloat("wanted_fps");
 	wanted_fps = MYMAX(wanted_fps, 1.0);
@@ -439,11 +473,6 @@ void Camera::updateViewingRange(f32 frametime_in)
 
 	m_range_old = new_range;
 	m_frametime_old = frametime;
-
-	// Just so big a value that everything rendered is visible
-	// Some more allowance than viewing_range_max * BS because of active objects etc.
-	m_cameranode->setFarValue(viewing_range_max * BS * 10);
-
 }
 
 void Camera::setDigging(s32 button)
@@ -480,7 +509,7 @@ void Camera::drawWieldedTool()
 	// Draw the wielded node (in a separate scene manager)
 	scene::ICameraSceneNode* cam = m_wieldmgr->getActiveCamera();
 	cam->setAspectRatio(m_cameranode->getAspectRatio());
-	cam->setFOV(m_cameranode->getFOV());
+	cam->setFOV(72.0*PI/180.0);
 	cam->setNearValue(0.1);
 	cam->setFarValue(100);
 	m_wieldmgr->drawAll();

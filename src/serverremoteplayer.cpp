@@ -24,7 +24,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "gamedef.h"
 #include "inventory.h"
 #include "environment.h"
-#include "materials.h"
+#include "tool.h"
 
 ServerRemotePlayer::ServerRemotePlayer(ServerEnvironment *env):
 	Player(env->getGameDef()),
@@ -169,51 +169,46 @@ std::string ServerRemotePlayer::getStaticData()
 	return "";
 }
 
-void ServerRemotePlayer::punch(ServerActiveObject *puncher,
+int ServerRemotePlayer::punch(v3f dir,
+		const ToolCapabilities *toolcap,
+		ServerActiveObject *puncher,
 		float time_from_last_punch)
 {
-	if(!puncher)
-		return;
+	if(!toolcap)
+		return 0;
 	
 	// No effect if PvP disabled
 	if(g_settings->getBool("enable_pvp") == false){
 		if(puncher->getType() == ACTIVEOBJECT_TYPE_PLAYER)
-			return;
+			return 0;
 	}
 	
-	// "Material" properties of a player
-	MaterialProperties mp;
-	mp.diggability = DIGGABLE_NORMAL;
-	mp.crackiness = -0.5;
-	mp.cuttability = 0.5;
+	// "Material" groups of the player
+	ItemGroupList groups;
+	groups["choppy"] = 2;
+	groups["fleshy"] = 3;
 
-	IItemDefManager *idef = m_env->getGameDef()->idef();
-	ItemStack punchitem = puncher->getWieldedItem();
-	ToolDiggingProperties tp =
-		punchitem.getToolDiggingProperties(idef);
-
-	HittingProperties hitprop = getHittingProperties(&mp, &tp,
-			time_from_last_punch);
+	HitParams hitparams = getHitParams(groups, toolcap, time_from_last_punch);
 	
 	actionstream<<"Player "<<getName()<<" punched by "
-			<<puncher->getDescription()<<", damage "<<hitprop.hp
+			<<puncher->getDescription()<<", damage "<<hitparams.hp
 			<<" HP"<<std::endl;
 	
-	setHP(getHP() - hitprop.hp);
-	punchitem.addWear(hitprop.wear, idef);
-	puncher->setWieldedItem(punchitem);
+	setHP(getHP() - hitparams.hp);
 	
-	if(hitprop.hp != 0)
+	if(hitparams.hp != 0)
 	{
 		std::ostringstream os(std::ios::binary);
 		// command (1 = punched)
 		writeU8(os, 1);
 		// damage
-		writeS16(os, hitprop.hp);
+		writeS16(os, hitparams.hp);
 		// create message and add to list
 		ActiveObjectMessage aom(getId(), false, os.str());
 		m_messages_out.push_back(aom);
 	}
+
+	return hitparams.wear;
 }
 
 void ServerRemotePlayer::rightClick(ServerActiveObject *clicker)

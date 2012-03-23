@@ -21,18 +21,12 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "mapsector.h"
 #include "mapblock.h"
 #include "main.h"
-#ifndef SERVER
-#include "client.h"
-#endif
 #include "filesys.h"
 #include "utility.h"
 #include "voxel.h"
 #include "porting.h"
 #include "mapgen.h"
 #include "nodemetadata.h"
-#ifndef SERVER
-#include <IMaterialRenderer.h>
-#endif
 #include "settings.h"
 #include "log.h"
 #include "profiler.h"
@@ -1916,7 +1910,7 @@ ServerMap::ServerMap(std::string savedir, IGameDef *gamedef):
 	m_database_read(NULL),
 	m_database_write(NULL)
 {
-	infostream<<__FUNCTION_NAME<<std::endl;
+	verbosestream<<__FUNCTION_NAME<<std::endl;
 
 	//m_chunksize = 8; // Takes a few seconds
 
@@ -1954,7 +1948,7 @@ ServerMap::ServerMap(std::string savedir, IGameDef *gamedef):
 			// If directory is empty, it is safe to save into it.
 			if(fs::GetDirListing(m_savedir).size() == 0)
 			{
-				infostream<<"Server: Empty save directory is valid."
+				infostream<<"ServerMap: Empty save directory is valid."
 						<<std::endl;
 				m_map_saving_enabled = true;
 			}
@@ -1971,25 +1965,10 @@ ServerMap::ServerMap(std::string savedir, IGameDef *gamedef):
 					//m_chunksize = 0;
 				}
 
-				/*try{
-					// Load chunk metadata
-					loadChunkMeta();
-				}
-				catch(FileNotGoodException &e){
-					infostream<<"WARNING: Could not load chunk metadata."
-							<<" Disabling chunk-based generator."
-							<<std::endl;
-					m_chunksize = 0;
-				}*/
-
-				/*infostream<<"Server: Successfully loaded chunk "
-						"metadata and sector (0,0) from "<<savedir<<
-						", assuming valid save directory."
-						<<std::endl;*/
-
-				infostream<<"Server: Successfully loaded map "
-						<<"and chunk metadata from "<<savedir
+				infostream<<"ServerMap: Successfully loaded map "
+						<<"metadata from "<<savedir
 						<<", assuming valid save directory."
+						<<" seed="<<m_seed<<"."
 						<<std::endl;
 
 				m_map_saving_enabled = true;
@@ -2004,7 +1983,7 @@ ServerMap::ServerMap(std::string savedir, IGameDef *gamedef):
 	}
 	catch(std::exception &e)
 	{
-		infostream<<"WARNING: Server: Failed to load map from "<<savedir
+		infostream<<"WARNING: ServerMap: Failed to load map from "<<savedir
 				<<", exception: "<<e.what()<<std::endl;
 		infostream<<"Please remove the map or fix it."<<std::endl;
 		infostream<<"WARNING: Map saving will be disabled."<<std::endl;
@@ -2021,7 +2000,7 @@ ServerMap::ServerMap(std::string savedir, IGameDef *gamedef):
 
 ServerMap::~ServerMap()
 {
-	infostream<<__FUNCTION_NAME<<std::endl;
+	verbosestream<<__FUNCTION_NAME<<std::endl;
 
 	try
 	{
@@ -2029,16 +2008,16 @@ ServerMap::~ServerMap()
 		{
 			// Save only changed parts
 			save(MOD_STATE_WRITE_AT_UNLOAD);
-			infostream<<"Server: saved map to "<<m_savedir<<std::endl;
+			infostream<<"ServerMap: Saved map to "<<m_savedir<<std::endl;
 		}
 		else
 		{
-			infostream<<"Server: map not saved"<<std::endl;
+			infostream<<"ServerMap: Map not saved"<<std::endl;
 		}
 	}
 	catch(std::exception &e)
 	{
-		infostream<<"Server: Failed to save map to "<<m_savedir
+		infostream<<"ServerMap: Failed to save map to "<<m_savedir
 				<<", exception: "<<e.what()<<std::endl;
 	}
 
@@ -2693,7 +2672,7 @@ void ServerMap::createDatabase() {
 	if(e == SQLITE_ABORT)
 		throw FileNotGoodException("Could not create database structure");
 	else
-		infostream<<"Server: Database structure was created";
+		infostream<<"ServerMap: Database structure was created";
 }
 
 void ServerMap::verifyDatabase() {
@@ -2741,7 +2720,7 @@ void ServerMap::verifyDatabase() {
 			throw FileNotGoodException("Cannot prepare read statement");
 		}
 		
-		infostream<<"Server: Database opened"<<std::endl;
+		infostream<<"ServerMap: Database opened"<<std::endl;
 	}
 }
 
@@ -2977,9 +2956,9 @@ void ServerMap::saveMapMeta()
 {
 	DSTACK(__FUNCTION_NAME);
 	
-	infostream<<"ServerMap::saveMapMeta(): "
+	/*infostream<<"ServerMap::saveMapMeta(): "
 			<<"seed="<<m_seed
-			<<std::endl;
+			<<std::endl;*/
 
 	createDirs(m_savedir);
 	
@@ -3006,8 +2985,8 @@ void ServerMap::loadMapMeta()
 {
 	DSTACK(__FUNCTION_NAME);
 	
-	infostream<<"ServerMap::loadMapMeta(): Loading map metadata"
-			<<std::endl;
+	/*infostream<<"ServerMap::loadMapMeta(): Loading map metadata"
+			<<std::endl;*/
 
 	std::string fullpath = m_savedir + DIR_DELIM + "map_meta.txt";
 	std::ifstream is(fullpath.c_str(), std::ios_base::binary);
@@ -3035,7 +3014,7 @@ void ServerMap::loadMapMeta()
 
 	m_seed = params.getU64("seed");
 
-	infostream<<"ServerMap::loadMapMeta(): "<<"seed="<<m_seed<<std::endl;
+	verbosestream<<"ServerMap::loadMapMeta(): "<<"seed="<<m_seed<<std::endl;
 }
 
 void ServerMap::saveSectorMeta(ServerMapSector *sector)
@@ -3529,744 +3508,6 @@ void ServerMap::PrintInfo(std::ostream &out)
 {
 	out<<"ServerMap: ";
 }
-
-#ifndef SERVER
-
-/*
-	ClientMap
-*/
-
-ClientMap::ClientMap(
-		Client *client,
-		IGameDef *gamedef,
-		MapDrawControl &control,
-		scene::ISceneNode* parent,
-		scene::ISceneManager* mgr,
-		s32 id
-):
-	Map(dout_client, gamedef),
-	scene::ISceneNode(parent, mgr, id),
-	m_client(client),
-	m_control(control),
-	m_camera_position(0,0,0),
-	m_camera_direction(0,0,1),
-	m_camera_fov(PI)
-{
-	m_camera_mutex.Init();
-	assert(m_camera_mutex.IsInitialized());
-	
-	m_box = core::aabbox3d<f32>(-BS*1000000,-BS*1000000,-BS*1000000,
-			BS*1000000,BS*1000000,BS*1000000);
-}
-
-ClientMap::~ClientMap()
-{
-	/*JMutexAutoLock lock(mesh_mutex);
-	
-	if(mesh != NULL)
-	{
-		mesh->drop();
-		mesh = NULL;
-	}*/
-}
-
-MapSector * ClientMap::emergeSector(v2s16 p2d)
-{
-	DSTACK(__FUNCTION_NAME);
-	// Check that it doesn't exist already
-	try{
-		return getSectorNoGenerate(p2d);
-	}
-	catch(InvalidPositionException &e)
-	{
-	}
-	
-	// Create a sector
-	ClientMapSector *sector = new ClientMapSector(this, p2d, m_gamedef);
-	
-	{
-		//JMutexAutoLock lock(m_sector_mutex); // Bulk comment-out
-		m_sectors.insert(p2d, sector);
-	}
-	
-	return sector;
-}
-
-#if 0
-void ClientMap::deSerializeSector(v2s16 p2d, std::istream &is)
-{
-	DSTACK(__FUNCTION_NAME);
-	ClientMapSector *sector = NULL;
-
-	//JMutexAutoLock lock(m_sector_mutex); // Bulk comment-out
-	
-	core::map<v2s16, MapSector*>::Node *n = m_sectors.find(p2d);
-
-	if(n != NULL)
-	{
-		sector = (ClientMapSector*)n->getValue();
-		assert(sector->getId() == MAPSECTOR_CLIENT);
-	}
-	else
-	{
-		sector = new ClientMapSector(this, p2d);
-		{
-			//JMutexAutoLock lock(m_sector_mutex); // Bulk comment-out
-			m_sectors.insert(p2d, sector);
-		}
-	}
-
-	sector->deSerialize(is);
-}
-#endif
-
-void ClientMap::OnRegisterSceneNode()
-{
-	if(IsVisible)
-	{
-		SceneManager->registerNodeForRendering(this, scene::ESNRP_SOLID);
-		SceneManager->registerNodeForRendering(this, scene::ESNRP_TRANSPARENT);
-	}
-
-	ISceneNode::OnRegisterSceneNode();
-}
-
-static bool isOccluded(Map *map, v3s16 p0, v3s16 p1, float step, float stepfac,
-		float start_off, float end_off, u32 needed_count, INodeDefManager *nodemgr)
-{
-	float d0 = (float)BS * p0.getDistanceFrom(p1);
-	v3s16 u0 = p1 - p0;
-	v3f uf = v3f(u0.X, u0.Y, u0.Z) * BS;
-	uf.normalize();
-	v3f p0f = v3f(p0.X, p0.Y, p0.Z) * BS;
-	u32 count = 0;
-	for(float s=start_off; s<d0+end_off; s+=step){
-		v3f pf = p0f + uf * s;
-		v3s16 p = floatToInt(pf, BS);
-		MapNode n = map->getNodeNoEx(p);
-		bool is_transparent = false;
-		const ContentFeatures &f = nodemgr->get(n);
-		if(f.solidness == 0)
-			is_transparent = (f.visual_solidness != 2);
-		else
-			is_transparent = (f.solidness != 2);
-		if(!is_transparent){
-			count++;
-			if(count >= needed_count)
-				return true;
-		}
-		step *= stepfac;
-	}
-	return false;
-}
-
-void ClientMap::renderMap(video::IVideoDriver* driver, s32 pass)
-{
-	INodeDefManager *nodemgr = m_gamedef->ndef();
-
-	//m_dout<<DTIME<<"Rendering map..."<<std::endl;
-	DSTACK(__FUNCTION_NAME);
-
-	bool is_transparent_pass = pass == scene::ESNRP_TRANSPARENT;
-	
-	std::string prefix;
-	if(pass == scene::ESNRP_SOLID)
-		prefix = "CM: solid: ";
-	else
-		prefix = "CM: transparent: ";
-
-	/*
-		This is called two times per frame, reset on the non-transparent one
-	*/
-	if(pass == scene::ESNRP_SOLID)
-	{
-		m_last_drawn_sectors.clear();
-	}
-
-	/*
-		Get time for measuring timeout.
-		
-		Measuring time is very useful for long delays when the
-		machine is swapping a lot.
-	*/
-	int time1 = time(0);
-
-	//u32 daynight_ratio = m_client->getDayNightRatio();
-
-	m_camera_mutex.Lock();
-	v3f camera_position = m_camera_position;
-	v3f camera_direction = m_camera_direction;
-	f32 camera_fov = m_camera_fov;
-	m_camera_mutex.Unlock();
-
-	/*
-		Get all blocks and draw all visible ones
-	*/
-
-	v3s16 cam_pos_nodes = floatToInt(camera_position, BS);
-	
-	v3s16 box_nodes_d = m_control.wanted_range * v3s16(1,1,1);
-
-	v3s16 p_nodes_min = cam_pos_nodes - box_nodes_d;
-	v3s16 p_nodes_max = cam_pos_nodes + box_nodes_d;
-
-	// Take a fair amount as we will be dropping more out later
-	// Umm... these additions are a bit strange but they are needed.
-	v3s16 p_blocks_min(
-			p_nodes_min.X / MAP_BLOCKSIZE - 3,
-			p_nodes_min.Y / MAP_BLOCKSIZE - 3,
-			p_nodes_min.Z / MAP_BLOCKSIZE - 3);
-	v3s16 p_blocks_max(
-			p_nodes_max.X / MAP_BLOCKSIZE + 1,
-			p_nodes_max.Y / MAP_BLOCKSIZE + 1,
-			p_nodes_max.Z / MAP_BLOCKSIZE + 1);
-	
-	u32 vertex_count = 0;
-	u32 meshbuffer_count = 0;
-	
-	// For limiting number of mesh updates per frame
-	u32 mesh_update_count = 0;
-	
-	// Number of blocks in rendering range
-	u32 blocks_in_range = 0;
-	// Number of blocks occlusion culled
-	u32 blocks_occlusion_culled = 0;
-	// Number of blocks in rendering range but don't have a mesh
-	u32 blocks_in_range_without_mesh = 0;
-	// Blocks that had mesh that would have been drawn according to
-	// rendering range (if max blocks limit didn't kick in)
-	u32 blocks_would_have_drawn = 0;
-	// Blocks that were drawn and had a mesh
-	u32 blocks_drawn = 0;
-	// Blocks which had a corresponding meshbuffer for this pass
-	u32 blocks_had_pass_meshbuf = 0;
-	// Blocks from which stuff was actually drawn
-	u32 blocks_without_stuff = 0;
-
-	/*
-		Collect a set of blocks for drawing
-	*/
-	
-	core::map<v3s16, MapBlock*> drawset;
-
-	{
-	ScopeProfiler sp(g_profiler, prefix+"collecting blocks for drawing", SPT_AVG);
-
-	for(core::map<v2s16, MapSector*>::Iterator
-			si = m_sectors.getIterator();
-			si.atEnd() == false; si++)
-	{
-		MapSector *sector = si.getNode()->getValue();
-		v2s16 sp = sector->getPos();
-		
-		if(m_control.range_all == false)
-		{
-			if(sp.X < p_blocks_min.X
-			|| sp.X > p_blocks_max.X
-			|| sp.Y < p_blocks_min.Z
-			|| sp.Y > p_blocks_max.Z)
-				continue;
-		}
-
-		core::list< MapBlock * > sectorblocks;
-		sector->getBlocks(sectorblocks);
-		
-		/*
-			Loop through blocks in sector
-		*/
-
-		u32 sector_blocks_drawn = 0;
-		
-		core::list< MapBlock * >::Iterator i;
-		for(i=sectorblocks.begin(); i!=sectorblocks.end(); i++)
-		{
-			MapBlock *block = *i;
-
-			/*
-				Compare block position to camera position, skip
-				if not seen on display
-			*/
-			
-			float range = 100000 * BS;
-			if(m_control.range_all == false)
-				range = m_control.wanted_range * BS;
-
-			float d = 0.0;
-			if(isBlockInSight(block->getPos(), camera_position,
-					camera_direction, camera_fov,
-					range, &d) == false)
-			{
-				continue;
-			}
-
-			// This is ugly (spherical distance limit?)
-			/*if(m_control.range_all == false &&
-					d - 0.5*BS*MAP_BLOCKSIZE > range)
-				continue;*/
-
-			blocks_in_range++;
-			
-#if 1
-			/*
-				Update expired mesh (used for day/night change)
-
-				It doesn't work exactly like it should now with the
-				tasked mesh update but whatever.
-			*/
-
-			bool mesh_expired = false;
-			
-			{
-				JMutexAutoLock lock(block->mesh_mutex);
-
-				mesh_expired = block->getMeshExpired();
-
-				// Mesh has not been expired and there is no mesh:
-				// block has no content
-				if(block->mesh == NULL && mesh_expired == false){
-					blocks_in_range_without_mesh++;
-					continue;
-				}
-			}
-
-			f32 faraway = BS*50;
-			//f32 faraway = m_control.wanted_range * BS;
-			
-			/*
-				This has to be done with the mesh_mutex unlocked
-			*/
-			// Pretty random but this should work somewhat nicely
-			if(mesh_expired && (
-					(mesh_update_count < 3
-						&& (d < faraway || mesh_update_count < 2)
-					)
-					|| 
-					(m_control.range_all && mesh_update_count < 20)
-				)
-			)
-			/*if(mesh_expired && mesh_update_count < 6
-					&& (d < faraway || mesh_update_count < 3))*/
-			{
-				mesh_update_count++;
-
-				// Mesh has been expired: generate new mesh
-				//block->updateMesh(daynight_ratio);
-				m_client->addUpdateMeshTask(block->getPos());
-
-				mesh_expired = false;
-			}
-#endif
-
-			/*
-				Occlusion culling
-			*/
-
-			v3s16 cpn = block->getPos() * MAP_BLOCKSIZE;
-			cpn += v3s16(MAP_BLOCKSIZE/2, MAP_BLOCKSIZE/2, MAP_BLOCKSIZE/2);
-			float step = BS*1;
-			float stepfac = 1.1;
-			float startoff = BS*1;
-			float endoff = -BS*MAP_BLOCKSIZE*1.42*1.42;
-			v3s16 spn = cam_pos_nodes + v3s16(0,0,0);
-			s16 bs2 = MAP_BLOCKSIZE/2 + 1;
-			u32 needed_count = 1;
-			if(
-				isOccluded(this, spn, cpn + v3s16(0,0,0),
-					step, stepfac, startoff, endoff, needed_count, nodemgr) &&
-				isOccluded(this, spn, cpn + v3s16(bs2,bs2,bs2),
-					step, stepfac, startoff, endoff, needed_count, nodemgr) &&
-				isOccluded(this, spn, cpn + v3s16(bs2,bs2,-bs2),
-					step, stepfac, startoff, endoff, needed_count, nodemgr) &&
-				isOccluded(this, spn, cpn + v3s16(bs2,-bs2,bs2),
-					step, stepfac, startoff, endoff, needed_count, nodemgr) &&
-				isOccluded(this, spn, cpn + v3s16(bs2,-bs2,-bs2),
-					step, stepfac, startoff, endoff, needed_count, nodemgr) &&
-				isOccluded(this, spn, cpn + v3s16(-bs2,bs2,bs2),
-					step, stepfac, startoff, endoff, needed_count, nodemgr) &&
-				isOccluded(this, spn, cpn + v3s16(-bs2,bs2,-bs2),
-					step, stepfac, startoff, endoff, needed_count, nodemgr) &&
-				isOccluded(this, spn, cpn + v3s16(-bs2,-bs2,bs2),
-					step, stepfac, startoff, endoff, needed_count, nodemgr) &&
-				isOccluded(this, spn, cpn + v3s16(-bs2,-bs2,-bs2),
-					step, stepfac, startoff, endoff, needed_count, nodemgr)
-			)
-			{
-				blocks_occlusion_culled++;
-				continue;
-			}
-			
-			// This block is in range. Reset usage timer.
-			block->resetUsageTimer();
-
-			/*
-				Ignore if mesh doesn't exist
-			*/
-			{
-				JMutexAutoLock lock(block->mesh_mutex);
-
-				scene::SMesh *mesh = block->mesh;
-				
-				if(mesh == NULL){
-					blocks_in_range_without_mesh++;
-					continue;
-				}
-			}
-			
-			// Limit block count in case of a sudden increase
-			blocks_would_have_drawn++;
-			if(blocks_drawn >= m_control.wanted_max_blocks
-					&& m_control.range_all == false
-					&& d > m_control.wanted_min_range * BS)
-				continue;
-			
-			// Add to set
-			drawset[block->getPos()] = block;
-			
-			sector_blocks_drawn++;
-			blocks_drawn++;
-
-		} // foreach sectorblocks
-
-		if(sector_blocks_drawn != 0)
-			m_last_drawn_sectors[sp] = true;
-	}
-	} // ScopeProfiler
-	
-	/*
-		Draw the selected MapBlocks
-	*/
-
-	{
-	ScopeProfiler sp(g_profiler, prefix+"drawing blocks", SPT_AVG);
-
-	int timecheck_counter = 0;
-	for(core::map<v3s16, MapBlock*>::Iterator
-			i = drawset.getIterator();
-			i.atEnd() == false; i++)
-	{
-		{
-			timecheck_counter++;
-			if(timecheck_counter > 50)
-			{
-				timecheck_counter = 0;
-				int time2 = time(0);
-				if(time2 > time1 + 4)
-				{
-					infostream<<"ClientMap::renderMap(): "
-						"Rendering takes ages, returning."
-						<<std::endl;
-					return;
-				}
-			}
-		}
-		
-		MapBlock *block = i.getNode()->getValue();
-
-		/*
-			Draw the faces of the block
-		*/
-		{
-			JMutexAutoLock lock(block->mesh_mutex);
-
-			scene::SMesh *mesh = block->mesh;
-			assert(mesh);
-			
-			u32 c = mesh->getMeshBufferCount();
-			bool stuff_actually_drawn = false;
-			for(u32 i=0; i<c; i++)
-			{
-				scene::IMeshBuffer *buf = mesh->getMeshBuffer(i);
-				const video::SMaterial& material = buf->getMaterial();
-				video::IMaterialRenderer* rnd =
-						driver->getMaterialRenderer(material.MaterialType);
-				bool transparent = (rnd && rnd->isTransparent());
-				// Render transparent on transparent pass and likewise.
-				if(transparent == is_transparent_pass)
-				{
-					if(buf->getVertexCount() == 0)
-						errorstream<<"Block ["<<analyze_block(block)
-								<<"] contains an empty meshbuf"<<std::endl;
-					/*
-						This *shouldn't* hurt too much because Irrlicht
-						doesn't change opengl textures if the old
-						material has the same texture.
-					*/
-					driver->setMaterial(buf->getMaterial());
-					driver->drawMeshBuffer(buf);
-					vertex_count += buf->getVertexCount();
-					meshbuffer_count++;
-					stuff_actually_drawn = true;
-				}
-			}
-			if(stuff_actually_drawn)
-				blocks_had_pass_meshbuf++;
-			else
-				blocks_without_stuff++;
-		}
-	}
-	} // ScopeProfiler
-	
-	// Log only on solid pass because values are the same
-	if(pass == scene::ESNRP_SOLID){
-		g_profiler->avg("CM: blocks in range", blocks_in_range);
-		g_profiler->avg("CM: blocks occlusion culled", blocks_occlusion_culled);
-		if(blocks_in_range != 0)
-			g_profiler->avg("CM: blocks in range without mesh (frac)",
-					(float)blocks_in_range_without_mesh/blocks_in_range);
-		g_profiler->avg("CM: blocks drawn", blocks_drawn);
-	}
-	
-	g_profiler->avg(prefix+"vertices drawn", vertex_count);
-	if(blocks_had_pass_meshbuf != 0)
-		g_profiler->avg(prefix+"meshbuffers per block",
-				(float)meshbuffer_count / (float)blocks_had_pass_meshbuf);
-	if(blocks_drawn != 0)
-		g_profiler->avg(prefix+"empty blocks (frac)",
-				(float)blocks_without_stuff / blocks_drawn);
-
-	m_control.blocks_drawn = blocks_drawn;
-	m_control.blocks_would_have_drawn = blocks_would_have_drawn;
-
-	/*infostream<<"renderMap(): is_transparent_pass="<<is_transparent_pass
-			<<", rendered "<<vertex_count<<" vertices."<<std::endl;*/
-}
-
-void ClientMap::renderPostFx()
-{
-	INodeDefManager *nodemgr = m_gamedef->ndef();
-
-	// Sadly ISceneManager has no "post effects" render pass, in that case we
-	// could just register for that and handle it in renderMap().
-
-	m_camera_mutex.Lock();
-	v3f camera_position = m_camera_position;
-	m_camera_mutex.Unlock();
-
-	MapNode n = getNodeNoEx(floatToInt(camera_position, BS));
-
-	// - If the player is in a solid node, make everything black.
-	// - If the player is in liquid, draw a semi-transparent overlay.
-	const ContentFeatures& features = nodemgr->get(n);
-	video::SColor post_effect_color = features.post_effect_color;
-	if(features.solidness == 2 && g_settings->getBool("free_move") == false)
-	{
-		post_effect_color = video::SColor(255, 0, 0, 0);
-	}
-	if (post_effect_color.getAlpha() != 0)
-	{
-		// Draw a full-screen rectangle
-		video::IVideoDriver* driver = SceneManager->getVideoDriver();
-		v2u32 ss = driver->getScreenSize();
-		core::rect<s32> rect(0,0, ss.X, ss.Y);
-		driver->draw2DRectangle(post_effect_color, rect);
-	}
-}
-
-bool ClientMap::setTempMod(v3s16 p, NodeMod mod,
-		core::map<v3s16, MapBlock*> *affected_blocks)
-{
-	bool changed = false;
-	/*
-		Add it to all blocks touching it
-	*/
-	v3s16 dirs[7] = {
-		v3s16(0,0,0), // this
-		v3s16(0,0,1), // back
-		v3s16(0,1,0), // top
-		v3s16(1,0,0), // right
-		v3s16(0,0,-1), // front
-		v3s16(0,-1,0), // bottom
-		v3s16(-1,0,0), // left
-	};
-	for(u16 i=0; i<7; i++)
-	{
-		v3s16 p2 = p + dirs[i];
-		// Block position of neighbor (or requested) node
-		v3s16 blockpos = getNodeBlockPos(p2);
-		MapBlock * blockref = getBlockNoCreateNoEx(blockpos);
-		if(blockref == NULL)
-			continue;
-		// Relative position of requested node
-		v3s16 relpos = p - blockpos*MAP_BLOCKSIZE;
-		if(blockref->setTempMod(relpos, mod))
-		{
-			changed = true;
-		}
-	}
-	if(changed && affected_blocks!=NULL)
-	{
-		for(u16 i=0; i<7; i++)
-		{
-			v3s16 p2 = p + dirs[i];
-			// Block position of neighbor (or requested) node
-			v3s16 blockpos = getNodeBlockPos(p2);
-			MapBlock * blockref = getBlockNoCreateNoEx(blockpos);
-			if(blockref == NULL)
-				continue;
-			affected_blocks->insert(blockpos, blockref);
-		}
-	}
-	return changed;
-}
-
-bool ClientMap::clearTempMod(v3s16 p,
-		core::map<v3s16, MapBlock*> *affected_blocks)
-{
-	bool changed = false;
-	v3s16 dirs[7] = {
-		v3s16(0,0,0), // this
-		v3s16(0,0,1), // back
-		v3s16(0,1,0), // top
-		v3s16(1,0,0), // right
-		v3s16(0,0,-1), // front
-		v3s16(0,-1,0), // bottom
-		v3s16(-1,0,0), // left
-	};
-	for(u16 i=0; i<7; i++)
-	{
-		v3s16 p2 = p + dirs[i];
-		// Block position of neighbor (or requested) node
-		v3s16 blockpos = getNodeBlockPos(p2);
-		MapBlock * blockref = getBlockNoCreateNoEx(blockpos);
-		if(blockref == NULL)
-			continue;
-		// Relative position of requested node
-		v3s16 relpos = p - blockpos*MAP_BLOCKSIZE;
-		if(blockref->clearTempMod(relpos))
-		{
-			changed = true;
-		}
-	}
-	if(changed && affected_blocks!=NULL)
-	{
-		for(u16 i=0; i<7; i++)
-		{
-			v3s16 p2 = p + dirs[i];
-			// Block position of neighbor (or requested) node
-			v3s16 blockpos = getNodeBlockPos(p2);
-			MapBlock * blockref = getBlockNoCreateNoEx(blockpos);
-			if(blockref == NULL)
-				continue;
-			affected_blocks->insert(blockpos, blockref);
-		}
-	}
-	return changed;
-}
-
-void ClientMap::expireMeshes(bool only_daynight_diffed)
-{
-	TimeTaker timer("expireMeshes()");
-
-	core::map<v2s16, MapSector*>::Iterator si;
-	si = m_sectors.getIterator();
-	for(; si.atEnd() == false; si++)
-	{
-		MapSector *sector = si.getNode()->getValue();
-
-		core::list< MapBlock * > sectorblocks;
-		sector->getBlocks(sectorblocks);
-		
-		core::list< MapBlock * >::Iterator i;
-		for(i=sectorblocks.begin(); i!=sectorblocks.end(); i++)
-		{
-			MapBlock *block = *i;
-
-			if(only_daynight_diffed && dayNightDiffed(block->getPos()) == false)
-			{
-				continue;
-			}
-			
-			{
-				JMutexAutoLock lock(block->mesh_mutex);
-				if(block->mesh != NULL)
-				{
-					/*block->mesh->drop();
-					block->mesh = NULL;*/
-					block->setMeshExpired(true);
-				}
-			}
-		}
-	}
-}
-
-void ClientMap::updateMeshes(v3s16 blockpos, u32 daynight_ratio)
-{
-	assert(mapType() == MAPTYPE_CLIENT);
-
-	try{
-		v3s16 p = blockpos + v3s16(0,0,0);
-		MapBlock *b = getBlockNoCreate(p);
-		b->updateMesh(daynight_ratio);
-		//b->setMeshExpired(true);
-	}
-	catch(InvalidPositionException &e){}
-	// Leading edge
-	try{
-		v3s16 p = blockpos + v3s16(-1,0,0);
-		MapBlock *b = getBlockNoCreate(p);
-		b->updateMesh(daynight_ratio);
-		//b->setMeshExpired(true);
-	}
-	catch(InvalidPositionException &e){}
-	try{
-		v3s16 p = blockpos + v3s16(0,-1,0);
-		MapBlock *b = getBlockNoCreate(p);
-		b->updateMesh(daynight_ratio);
-		//b->setMeshExpired(true);
-	}
-	catch(InvalidPositionException &e){}
-	try{
-		v3s16 p = blockpos + v3s16(0,0,-1);
-		MapBlock *b = getBlockNoCreate(p);
-		b->updateMesh(daynight_ratio);
-		//b->setMeshExpired(true);
-	}
-	catch(InvalidPositionException &e){}
-}
-
-#if 0
-/*
-	Update mesh of block in which the node is, and if the node is at the
-	leading edge, update the appropriate leading blocks too.
-*/
-void ClientMap::updateNodeMeshes(v3s16 nodepos, u32 daynight_ratio)
-{
-	v3s16 dirs[4] = {
-		v3s16(0,0,0),
-		v3s16(-1,0,0),
-		v3s16(0,-1,0),
-		v3s16(0,0,-1),
-	};
-	v3s16 blockposes[4];
-	for(u32 i=0; i<4; i++)
-	{
-		v3s16 np = nodepos + dirs[i];
-		blockposes[i] = getNodeBlockPos(np);
-		// Don't update mesh of block if it has been done already
-		bool already_updated = false;
-		for(u32 j=0; j<i; j++)
-		{
-			if(blockposes[j] == blockposes[i])
-			{
-				already_updated = true;
-				break;
-			}
-		}
-		if(already_updated)
-			continue;
-		// Update mesh
-		MapBlock *b = getBlockNoCreate(blockposes[i]);
-		b->updateMesh(daynight_ratio);
-	}
-}
-#endif
-
-void ClientMap::PrintInfo(std::ostream &out)
-{
-	out<<"ClientMap: ";
-}
-
-#endif // !SERVER
 
 /*
 	MapVoxelManipulator

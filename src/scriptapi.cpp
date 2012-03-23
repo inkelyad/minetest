@@ -45,6 +45,8 @@ extern "C" {
 #include "mapblock.h" // For getNodeBlockPos
 #include "content_nodemeta.h"
 #include "utility.h"
+#include "tool.h"
+#include "daynightratio.h"
 
 static void stackDump(lua_State *L, std::ostream &o)
 {
@@ -416,14 +418,6 @@ struct EnumString es_NodeBoxType[] =
 	{0, NULL},
 };
 
-struct EnumString es_Diggability[] =
-{
-	{DIGGABLE_NOT, "not"},
-	{DIGGABLE_NORMAL, "normal"},
-	{DIGGABLE_CONSTANT, "constant"},
-	{0, NULL},
-};
-
 /*
 	C struct <-> Lua table converter functions
 */
@@ -612,6 +606,7 @@ static core::aabbox3d<f32> read_aabbox3df32(lua_State *L, int index, f32 scale)
 	return box;
 }
 
+#if 0
 /*
 	MaterialProperties
 */
@@ -630,87 +625,156 @@ static MaterialProperties read_material_properties(
 	getfloatfield(L, -1, "flammability", prop.flammability);
 	return prop;
 }
+#endif
 
 /*
-	ToolDiggingProperties
+	Groups
+*/
+static void read_groups(lua_State *L, int index,
+		std::map<std::string, int> &result)
+{
+	result.clear();
+	lua_pushnil(L);
+	if(index < 0)
+		index -= 1;
+	while(lua_next(L, index) != 0){
+		// key at index -2 and value at index -1
+		std::string name = luaL_checkstring(L, -2);
+		int rating = luaL_checkinteger(L, -1);
+		result[name] = rating;
+		// removes value, keeps key for next iteration
+		lua_pop(L, 1);
+	}
+}
+
+/*
+	ToolCapabilities
 */
 
-static ToolDiggingProperties read_tool_digging_properties(
+static ToolCapabilities read_tool_capabilities(
 		lua_State *L, int table)
 {
-	ToolDiggingProperties prop;
-	getfloatfield(L, table, "full_punch_interval", prop.full_punch_interval);
-	getfloatfield(L, table, "basetime", prop.basetime);
-	getfloatfield(L, table, "dt_weight", prop.dt_weight);
-	getfloatfield(L, table, "dt_crackiness", prop.dt_crackiness);
-	getfloatfield(L, table, "dt_crumbliness", prop.dt_crumbliness);
-	getfloatfield(L, table, "dt_cuttability", prop.dt_cuttability);
-	getfloatfield(L, table, "basedurability", prop.basedurability);
-	getfloatfield(L, table, "dd_weight", prop.dd_weight);
-	getfloatfield(L, table, "dd_crackiness", prop.dd_crackiness);
-	getfloatfield(L, table, "dd_crumbliness", prop.dd_crumbliness);
-	getfloatfield(L, table, "dd_cuttability", prop.dd_cuttability);
-	return prop;
+	ToolCapabilities toolcap;
+	getfloatfield(L, table, "full_punch_interval", toolcap.full_punch_interval);
+	getintfield(L, table, "max_drop_level", toolcap.max_drop_level);
+	lua_getfield(L, table, "groupcaps");
+	if(lua_istable(L, -1)){
+		int table_groupcaps = lua_gettop(L);
+		lua_pushnil(L);
+		while(lua_next(L, table_groupcaps) != 0){
+			// key at index -2 and value at index -1
+			std::string groupname = luaL_checkstring(L, -2);
+			if(lua_istable(L, -1)){
+				int table_groupcap = lua_gettop(L);
+				// This will be created
+				ToolGroupCap groupcap;
+				// Read simple parameters
+				getfloatfield(L, table_groupcap, "maxwear", groupcap.maxwear);
+				getintfield(L, table_groupcap, "maxlevel", groupcap.maxlevel);
+				// Read "times" table
+				lua_getfield(L, table_groupcap, "times");
+				if(lua_istable(L, -1)){
+					int table_times = lua_gettop(L);
+					lua_pushnil(L);
+					while(lua_next(L, table_times) != 0){
+						// key at index -2 and value at index -1
+						int rating = luaL_checkinteger(L, -2);
+						float time = luaL_checknumber(L, -1);
+						groupcap.times[rating] = time;
+						// removes value, keeps key for next iteration
+						lua_pop(L, 1);
+					}
+				}
+				lua_pop(L, 1);
+				// Insert groupcap into toolcap
+				toolcap.groupcaps[groupname] = groupcap;
+			}
+			// removes value, keeps key for next iteration
+			lua_pop(L, 1);
+		}
+	}
+	lua_pop(L, 1);
+	return toolcap;
 }
 
-static void set_tool_digging_properties(lua_State *L, int table,
-		const ToolDiggingProperties &prop)
+static void set_tool_capabilities(lua_State *L, int table,
+		const ToolCapabilities &toolcap)
 {
-	setfloatfield(L, table, "full_punch_interval", prop.full_punch_interval);
-	setfloatfield(L, table, "basetime", prop.basetime);
-	setfloatfield(L, table, "dt_weight", prop.dt_weight);
-	setfloatfield(L, table, "dt_crackiness", prop.dt_crackiness);
-	setfloatfield(L, table, "dt_crumbliness", prop.dt_crumbliness);
-	setfloatfield(L, table, "dt_cuttability", prop.dt_cuttability);
-	setfloatfield(L, table, "basedurability", prop.basedurability);
-	setfloatfield(L, table, "dd_weight", prop.dd_weight);
-	setfloatfield(L, table, "dd_crackiness", prop.dd_crackiness);
-	setfloatfield(L, table, "dd_crumbliness", prop.dd_crumbliness);
-	setfloatfield(L, table, "dd_cuttability", prop.dd_cuttability);
+	setfloatfield(L, table, "full_punch_interval", toolcap.full_punch_interval);
+	setintfield(L, table, "max_drop_level", toolcap.max_drop_level);
+	// Create groupcaps table
+	lua_newtable(L);
+	// For each groupcap
+	for(std::map<std::string, ToolGroupCap>::const_iterator
+			i = toolcap.groupcaps.begin(); i != toolcap.groupcaps.end(); i++){
+		// Create groupcap table
+		lua_newtable(L);
+		const std::string &name = i->first;
+		const ToolGroupCap &groupcap = i->second;
+		// Create subtable "times"
+		lua_newtable(L);
+		for(std::map<int, float>::const_iterator
+				i = groupcap.times.begin(); i != groupcap.times.end(); i++){
+			int rating = i->first;
+			float time = i->second;
+			lua_pushinteger(L, rating);
+			lua_pushnumber(L, time);
+			lua_settable(L, -3);
+		}
+		// Set subtable "times"
+		lua_setfield(L, -2, "times");
+		// Set simple parameters
+		setfloatfield(L, -1, "maxwear", groupcap.maxwear);
+		setintfield(L, -1, "maxlevel", groupcap.maxlevel);
+		// Insert groupcap table into groupcaps table
+		lua_setfield(L, -2, name.c_str());
+	}
+	// Set groupcaps table
+	lua_setfield(L, -2, "groupcaps");
 }
 
-static void push_tool_digging_properties(lua_State *L,
-		const ToolDiggingProperties &prop)
+static void push_tool_capabilities(lua_State *L,
+		const ToolCapabilities &prop)
 {
 	lua_newtable(L);
-	set_tool_digging_properties(L, -1, prop);
+	set_tool_capabilities(L, -1, prop);
 }
 
 /*
-	DiggingProperties
+	DigParams
 */
 
-static void set_digging_properties(lua_State *L, int table,
-		const DiggingProperties &prop)
+static void set_dig_params(lua_State *L, int table,
+		const DigParams &params)
 {
-	setboolfield(L, table, "diggable", prop.diggable);
-	setfloatfield(L, table, "time", prop.time);
-	setintfield(L, table, "wear", prop.wear);
+	setboolfield(L, table, "diggable", params.diggable);
+	setfloatfield(L, table, "time", params.time);
+	setintfield(L, table, "wear", params.wear);
 }
 
-static void push_digging_properties(lua_State *L,
-		const DiggingProperties &prop)
+static void push_dig_params(lua_State *L,
+		const DigParams &params)
 {
 	lua_newtable(L);
-	set_digging_properties(L, -1, prop);
+	set_dig_params(L, -1, params);
 }
 
 /*
-	HittingProperties
+	HitParams
 */
 
-static void set_hitting_properties(lua_State *L, int table,
-		const HittingProperties &prop)
+static void set_hit_params(lua_State *L, int table,
+		const HitParams &params)
 {
-	setintfield(L, table, "hp", prop.hp);
-	setintfield(L, table, "wear", prop.wear);
+	setintfield(L, table, "hp", params.hp);
+	setintfield(L, table, "wear", params.wear);
 }
 
-static void push_hitting_properties(lua_State *L,
-		const HittingProperties &prop)
+static void push_hit_params(lua_State *L,
+		const HitParams &params)
 {
 	lua_newtable(L);
-	set_hitting_properties(L, -1, prop);
+	set_hit_params(L, -1, params);
 }
 
 /*
@@ -778,19 +842,25 @@ static ItemDefinition read_item_definition(lua_State *L, int index)
 
 	getboolfield(L, index, "liquids_pointable", def.liquids_pointable);
 
-	lua_getfield(L, index, "tool_digging_properties");
+	warn_if_field_exists(L, index, "tool_digging_properties",
+			"deprecated: use tool_capabilities");
+	
+	lua_getfield(L, index, "tool_capabilities");
 	if(lua_istable(L, -1)){
-		def.tool_digging_properties = new ToolDiggingProperties(
-				read_tool_digging_properties(L, -1));
+		def.tool_capabilities = new ToolCapabilities(
+				read_tool_capabilities(L, -1));
 	}
-	lua_pop(L, 1);
 
-	// If name is "" (hand), ensure there are ToolDiggingProperties
+	// If name is "" (hand), ensure there are ToolCapabilities
 	// because it will be looked up there whenever any other item has
-	// no ToolDiggingProperties
-	if(def.name == "" && def.tool_digging_properties == NULL){
-		def.tool_digging_properties = new ToolDiggingProperties();
+	// no ToolCapabilities
+	if(def.name == "" && def.tool_capabilities == NULL){
+		def.tool_capabilities = new ToolCapabilities();
 	}
+
+	lua_getfield(L, index, "groups");
+	read_groups(L, -1, def.groups);
+	lua_pop(L, 1);
 
 	return def;
 }
@@ -805,7 +875,13 @@ static ContentFeatures read_content_features(lua_State *L, int index)
 		index = lua_gettop(L) + 1 + index;
 
 	ContentFeatures f;
+	/* Name */
 	getstringfield(L, index, "name", f.name);
+
+	/* Groups */
+	lua_getfield(L, index, "groups");
+	read_groups(L, -1, f.groups);
+	lua_pop(L, 1);
 
 	/* Visual definition */
 
@@ -955,12 +1031,6 @@ static ContentFeatures read_content_features(lua_State *L, int index)
 		if(lua_istable(L, -1))
 			f.selection_box.wall_side = read_aabbox3df32(L, -1, BS);
 		lua_pop(L, 1);
-	}
-	lua_pop(L, 1);
-
-	lua_getfield(L, index, "material");
-	if(lua_istable(L, -1)){
-		f.material = read_material_properties(L, -1);
 	}
 	lua_pop(L, 1);
 
@@ -1215,16 +1285,16 @@ private:
 		return 1;
 	}
 
-	// get_tool_digging_properties(self) -> table
+	// get_tool_capabilities(self) -> table
 	// Returns the effective tool digging properties.
 	// Returns those of the hand ("") if this item has none associated.
-	static int l_get_tool_digging_properties(lua_State *L)
+	static int l_get_tool_capabilities(lua_State *L)
 	{
 		LuaItemStack *o = checkobject(L, 1);
 		ItemStack &item = o->m_stack;
-		const ToolDiggingProperties &prop =
-			item.getToolDiggingProperties(get_server(L)->idef());
-		push_tool_digging_properties(L, prop);
+		const ToolCapabilities &prop =
+			item.getToolCapabilities(get_server(L)->idef());
+		push_tool_capabilities(L, prop);
 		return 1;
 	}
 
@@ -1386,7 +1456,7 @@ const luaL_reg LuaItemStack::methods[] = {
 	method(LuaItemStack, get_free_space),
 	method(LuaItemStack, is_known),
 	method(LuaItemStack, get_definition),
-	method(LuaItemStack, get_tool_digging_properties),
+	method(LuaItemStack, get_tool_capabilities),
 	method(LuaItemStack, add_wear),
 	method(LuaItemStack, add_item),
 	method(LuaItemStack, item_fits),
@@ -2171,7 +2241,7 @@ private:
 		ObjectRef *ref = checkobject(L, 1);
 		ServerActiveObject *co = getobject(ref);
 		if(co == NULL) return 0;
-		infostream<<"ObjectRef::l_remove(): id="<<co->getId()<<std::endl;
+		verbosestream<<"ObjectRef::l_remove(): id="<<co->getId()<<std::endl;
 		co->m_removed = true;
 		return 0;
 	}
@@ -2228,17 +2298,22 @@ private:
 		return 0;
 	}
 
-	// punch(self, puncher); puncher = an another ObjectRef
+	// punch(self, puncher, tool_capabilities, direction, time_from_last_punch)
 	static int l_punch(lua_State *L)
 	{
 		ObjectRef *ref = checkobject(L, 1);
-		ObjectRef *ref2 = checkobject(L, 2);
+		ObjectRef *puncher_ref = checkobject(L, 2);
 		ServerActiveObject *co = getobject(ref);
-		ServerActiveObject *co2 = getobject(ref2);
+		ServerActiveObject *puncher = getobject(puncher_ref);
 		if(co == NULL) return 0;
-		if(co2 == NULL) return 0;
+		if(puncher == NULL) return 0;
+		ToolCapabilities toolcap = read_tool_capabilities(L, 3);
+		v3f dir = read_v3f(L, 4);
+		float time_from_last_punch = 1000000;
+		if(lua_isnumber(L, 5))
+			time_from_last_punch = lua_tonumber(L, 5);
 		// Do it
-		co->punch(co2);
+		puncher->punch(dir, &toolcap, puncher, time_from_last_punch);
 		return 0;
 	}
 
@@ -2266,8 +2341,8 @@ private:
 		ServerActiveObject *co = getobject(ref);
 		if(co == NULL) return 0;
 		int hp = lua_tonumber(L, 2);
-		infostream<<"ObjectRef::l_set_hp(): id="<<co->getId()
-				<<" hp="<<hp<<std::endl;
+		/*infostream<<"ObjectRef::l_set_hp(): id="<<co->getId()
+				<<" hp="<<hp<<std::endl;*/
 		// Do it
 		co->setHP(hp);
 		// Return
@@ -2283,8 +2358,8 @@ private:
 		ServerActiveObject *co = getobject(ref);
 		if(co == NULL) return 0;
 		int hp = co->getHP();
-		infostream<<"ObjectRef::l_get_hp(): id="<<co->getId()
-				<<" hp="<<hp<<std::endl;
+		/*infostream<<"ObjectRef::l_get_hp(): id="<<co->getId()
+				<<" hp="<<hp<<std::endl;*/
 		// Return
 		lua_pushnumber(L, hp);
 		return 1;
@@ -2464,6 +2539,19 @@ private:
 		return 0;
 	}
 
+	// set_armor_groups(self, groups)
+	static int l_set_armor_groups(lua_State *L)
+	{
+		ObjectRef *ref = checkobject(L, 1);
+		LuaEntitySAO *co = getluaobject(ref);
+		if(co == NULL) return 0;
+		// Do it
+		ItemGroupList groups;
+		read_groups(L, 2, groups);
+		co->setArmorGroups(groups);
+		return 0;
+	}
+
 	// DEPRECATED
 	// get_entity_name(self)
 	static int l_get_entity_name(lua_State *L)
@@ -2626,6 +2714,7 @@ const luaL_reg ObjectRef::methods[] = {
 	method(ObjectRef, getyaw),
 	method(ObjectRef, settexturemod),
 	method(ObjectRef, setsprite),
+	method(ObjectRef, set_armor_groups),
 	method(ObjectRef, get_entity_name),
 	method(ObjectRef, get_luaentity),
 	// Player-only
@@ -2809,7 +2898,7 @@ private:
 		if(item.empty() || !item.isKnown(get_server(L)->idef()))
 			return 0;
 		// Do it
-		ServerActiveObject *obj = new ItemSAO(env, pos, item.getItemString());
+		ServerActiveObject *obj = createItemSAO(env, pos, item.getItemString());
 		int objectid = env->addActiveObject(obj);
 		// If failed to add, return nothing (reads as nil)
 		if(objectid == 0)
@@ -2823,15 +2912,8 @@ private:
 	// pos = {x=num, y=num, z=num}
 	static int l_add_rat(lua_State *L)
 	{
-		infostream<<"EnvRef::l_add_rat()"<<std::endl;
-		EnvRef *o = checkobject(L, 1);
-		ServerEnvironment *env = o->m_env;
-		if(env == NULL) return 0;
-		// pos
-		v3f pos = checkFloatPos(L, 2);
-		// Do it
-		ServerActiveObject *obj = new RatSAO(env, pos);
-		env->addActiveObject(obj);
+		infostream<<"EnvRef::l_add_rat(): C++ mobs have been removed."
+				<<" Doing nothing."<<std::endl;
 		return 0;
 	}
 
@@ -2839,15 +2921,8 @@ private:
 	// pos = {x=num, y=num, z=num}
 	static int l_add_firefly(lua_State *L)
 	{
-		infostream<<"EnvRef::l_add_firefly()"<<std::endl;
-		EnvRef *o = checkobject(L, 1);
-		ServerEnvironment *env = o->m_env;
-		if(env == NULL) return 0;
-		// pos
-		v3f pos = checkFloatPos(L, 2);
-		// Do it
-		ServerActiveObject *obj = new FireflySAO(env, pos);
-		env->addActiveObject(obj);
+		infostream<<"EnvRef::l_add_firefly(): C++ mobs have been removed."
+				<<" Doing nothing."<<std::endl;
 		return 0;
 	}
 
@@ -2970,12 +3045,12 @@ public:
 	EnvRef(ServerEnvironment *env):
 		m_env(env)
 	{
-		infostream<<"EnvRef created"<<std::endl;
+		//infostream<<"EnvRef created"<<std::endl;
 	}
 
 	~EnvRef()
 	{
-		infostream<<"EnvRef destructing"<<std::endl;
+		//infostream<<"EnvRef destructing"<<std::endl;
 	}
 
 	// Creates an EnvRef and leaves it on top of stack
@@ -3172,7 +3247,7 @@ static int l_register_item_raw(lua_State *L)
 	lua_getfield(L, table, "name");
 	if(lua_isstring(L, -1)){
 		std::string name = lua_tostring(L, -1);
-		infostream<<"register_item_raw: "<<name<<std::endl;
+		verbosestream<<"register_item_raw: "<<name<<std::endl;
 	} else {
 		throw LuaError(L, "register_item_raw: name is not defined or not a string");
 	}
@@ -3493,10 +3568,7 @@ static int l_get_player_privs(lua_State *L)
 	// Do it
 	lua_newtable(L);
 	int table = lua_gettop(L);
-	u64 privs_i = server->getPlayerAuthPrivs(name);
-	// Special case for the "name" setting (local player / server owner)
-	if(name == g_settings->get("name"))
-		privs_i = PRIV_ALL;
+	u64 privs_i = server->getPlayerEffectivePrivs(name);
 	std::set<std::string> privs_s = privsToSet(privs_i);
 	for(std::set<std::string>::const_iterator
 			i = privs_s.begin(); i != privs_s.end(); i++){
@@ -3529,28 +3601,30 @@ static int l_get_inventory(lua_State *L)
 	return 1;
 }
 
-// get_digging_properties(material_properties, tool_digging_properties[, time_from_last_punch])
-static int l_get_digging_properties(lua_State *L)
+// get_dig_params(groups, tool_capabilities[, time_from_last_punch])
+static int l_get_dig_params(lua_State *L)
 {
-	MaterialProperties mp = read_material_properties(L, 1);
-	ToolDiggingProperties tp = read_tool_digging_properties(L, 2);
+	std::map<std::string, int> groups;
+	read_groups(L, 1, groups);
+	ToolCapabilities tp = read_tool_capabilities(L, 2);
 	if(lua_isnoneornil(L, 3))
-		push_digging_properties(L, getDiggingProperties(&mp, &tp));
+		push_dig_params(L, getDigParams(groups, &tp));
 	else
-		push_digging_properties(L, getDiggingProperties(&mp, &tp,
+		push_dig_params(L, getDigParams(groups, &tp,
 					luaL_checknumber(L, 3)));
 	return 1;
 }
 
-// get_hitting_properties(material_properties, tool_digging_properties[, time_from_last_punch])
-static int l_get_hitting_properties(lua_State *L)
+// get_hit_params(groups, tool_capabilities[, time_from_last_punch])
+static int l_get_hit_params(lua_State *L)
 {
-	MaterialProperties mp = read_material_properties(L, 1);
-	ToolDiggingProperties tp = read_tool_digging_properties(L, 2);
+	std::map<std::string, int> groups;
+	read_groups(L, 1, groups);
+	ToolCapabilities tp = read_tool_capabilities(L, 2);
 	if(lua_isnoneornil(L, 3))
-		push_hitting_properties(L, getHittingProperties(&mp, &tp));
+		push_hit_params(L, getHitParams(groups, &tp));
 	else
-		push_hitting_properties(L, getHittingProperties(&mp, &tp,
+		push_hit_params(L, getHitParams(groups, &tp,
 					luaL_checknumber(L, 3)));
 	return 1;
 }
@@ -3576,6 +3650,14 @@ static int l_get_modpath(lua_State *L)
 	return 1;
 }
 
+// get_worldpath()
+static int l_get_worldpath(lua_State *L)
+{
+	std::string worldpath = get_server(L)->getWorldPath();
+	lua_pushstring(L, worldpath.c_str());
+	return 1;
+}
+
 static const struct luaL_Reg minetest_f [] = {
 	{"debug", l_debug},
 	{"log", l_log},
@@ -3588,10 +3670,11 @@ static const struct luaL_Reg minetest_f [] = {
 	{"chat_send_player", l_chat_send_player},
 	{"get_player_privs", l_get_player_privs},
 	{"get_inventory", l_get_inventory},
-	{"get_digging_properties", l_get_digging_properties},
-	{"get_hitting_properties", l_get_hitting_properties},
+	{"get_dig_params", l_get_dig_params},
+	{"get_hit_params", l_get_hit_params},
 	{"get_current_modname", l_get_current_modname},
 	{"get_modpath", l_get_modpath},
+	{"get_worldpath", l_get_worldpath},
 	{NULL, NULL}
 };
 
@@ -3603,7 +3686,7 @@ void scriptapi_export(lua_State *L, Server *server)
 {
 	realitycheck(L);
 	assert(lua_checkstack(L, 20));
-	infostream<<"scriptapi_export"<<std::endl;
+	verbosestream<<"scriptapi_export()"<<std::endl;
 	StackUnroller stack_unroller(L);
 
 	// Store server as light userdata in registry
@@ -3663,7 +3746,7 @@ void scriptapi_add_environment(lua_State *L, ServerEnvironment *env)
 {
 	realitycheck(L);
 	assert(lua_checkstack(L, 20));
-	infostream<<"scriptapi_add_environment"<<std::endl;
+	verbosestream<<"scriptapi_add_environment"<<std::endl;
 	StackUnroller stack_unroller(L);
 
 	// Create EnvRef on stack
@@ -4157,12 +4240,11 @@ void scriptapi_environment_on_generated(lua_State *L, v3s16 minp, v3s16 maxp)
 	luaentity
 */
 
-bool scriptapi_luaentity_add(lua_State *L, u16 id, const char *name,
-		const std::string &staticdata)
+bool scriptapi_luaentity_add(lua_State *L, u16 id, const char *name)
 {
 	realitycheck(L);
 	assert(lua_checkstack(L, 20));
-	infostream<<"scriptapi_luaentity_add: id="<<id<<" name=\""
+	verbosestream<<"scriptapi_luaentity_add: id="<<id<<" name=\""
 			<<name<<"\""<<std::endl;
 	StackUnroller stack_unroller(L);
 	
@@ -4205,6 +4287,21 @@ bool scriptapi_luaentity_add(lua_State *L, u16 id, const char *name,
 	lua_pushvalue(L, object); // Copy object to top of stack
 	lua_settable(L, -3);
 	
+	return true;
+}
+
+void scriptapi_luaentity_activate(lua_State *L, u16 id,
+		const std::string &staticdata)
+{
+	realitycheck(L);
+	assert(lua_checkstack(L, 20));
+	verbosestream<<"scriptapi_luaentity_activate: id="<<id<<std::endl;
+	StackUnroller stack_unroller(L);
+	
+	// Get minetest.luaentities[id]
+	luaentity_get(L, id);
+	int object = lua_gettop(L);
+	
 	// Get on_activate function
 	lua_pushvalue(L, object);
 	lua_getfield(L, -1, "on_activate");
@@ -4214,18 +4311,16 @@ bool scriptapi_luaentity_add(lua_State *L, u16 id, const char *name,
 		lua_pushlstring(L, staticdata.c_str(), staticdata.size());
 		// Call with 2 arguments, 0 results
 		if(lua_pcall(L, 2, 0, 0))
-			script_error(L, "error running function %s:on_activate: %s\n",
-					name, lua_tostring(L, -1));
+			script_error(L, "error running function on_activate: %s\n",
+					lua_tostring(L, -1));
 	}
-	
-	return true;
 }
 
 void scriptapi_luaentity_rm(lua_State *L, u16 id)
 {
 	realitycheck(L);
 	assert(lua_checkstack(L, 20));
-	infostream<<"scriptapi_luaentity_rm: id="<<id<<std::endl;
+	verbosestream<<"scriptapi_luaentity_rm: id="<<id<<std::endl;
 
 	// Get minetest.luaentities table
 	lua_getglobal(L, "minetest");
@@ -4245,7 +4340,7 @@ std::string scriptapi_luaentity_get_staticdata(lua_State *L, u16 id)
 {
 	realitycheck(L);
 	assert(lua_checkstack(L, 20));
-	infostream<<"scriptapi_luaentity_get_staticdata: id="<<id<<std::endl;
+	//infostream<<"scriptapi_luaentity_get_staticdata: id="<<id<<std::endl;
 	StackUnroller stack_unroller(L);
 
 	// Get minetest.luaentities[id]
@@ -4275,7 +4370,7 @@ void scriptapi_luaentity_get_properties(lua_State *L, u16 id,
 {
 	realitycheck(L);
 	assert(lua_checkstack(L, 20));
-	infostream<<"scriptapi_luaentity_get_properties: id="<<id<<std::endl;
+	//infostream<<"scriptapi_luaentity_get_properties: id="<<id<<std::endl;
 	StackUnroller stack_unroller(L);
 
 	// Get minetest.luaentities[id]
@@ -4284,6 +4379,8 @@ void scriptapi_luaentity_get_properties(lua_State *L, u16 id,
 
 	/* Read stuff */
 	
+	prop->hp_max = getintfield_default(L, -1, "hp_max", 10);
+
 	getboolfield(L, -1, "physical", prop->physical);
 
 	getfloatfield(L, -1, "weight", prop->weight);
@@ -4351,9 +4448,11 @@ void scriptapi_luaentity_step(lua_State *L, u16 id, float dtime)
 		script_error(L, "error running function 'on_step': %s\n", lua_tostring(L, -1));
 }
 
-// Calls entity:on_punch(ObjectRef puncher, time_from_last_punch)
+// Calls entity:on_punch(ObjectRef puncher, time_from_last_punch,
+//                       tool_capabilities, direction)
 void scriptapi_luaentity_punch(lua_State *L, u16 id,
-		ServerActiveObject *puncher, float time_from_last_punch)
+		ServerActiveObject *puncher, float time_from_last_punch,
+		const ToolCapabilities *toolcap, v3f dir)
 {
 	realitycheck(L);
 	assert(lua_checkstack(L, 20));
@@ -4372,8 +4471,10 @@ void scriptapi_luaentity_punch(lua_State *L, u16 id,
 	lua_pushvalue(L, object); // self
 	objectref_get_or_create(L, puncher); // Clicker reference
 	lua_pushnumber(L, time_from_last_punch);
-	// Call with 2 arguments, 0 results
-	if(lua_pcall(L, 3, 0, 0))
+	push_tool_capabilities(L, *toolcap);
+	push_v3f(L, dir);
+	// Call with 5 arguments, 0 results
+	if(lua_pcall(L, 5, 0, 0))
 		script_error(L, "error running function 'on_punch': %s\n", lua_tostring(L, -1));
 }
 

@@ -27,6 +27,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 struct LuaEntityProperties
 {
 	// Values are BS=1
+	s16 hp_max;
 	bool physical;
 	float weight;
 	core::aabbox3d<f32> collisionbox;
@@ -41,6 +42,12 @@ struct LuaEntityProperties
 	void serialize(std::ostream &os);
 	void deSerialize(std::istream &is);
 };
+
+#define LUAENTITY_CMD_UPDATE_POSITION 0
+#define LUAENTITY_CMD_SET_TEXTURE_MOD 1
+#define LUAENTITY_CMD_SET_SPRITE 2
+#define LUAENTITY_CMD_PUNCHED 3
+#define LUAENTITY_CMD_UPDATE_ARMOR_GROUPS 4
 
 #endif
 

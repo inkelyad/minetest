@@ -38,11 +38,18 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "main.h" // For g_settings, g_profiler
 #include "gamedef.h"
 #include "serverremoteplayer.h"
+#ifndef SERVER
+#include "clientmap.h"
+#endif
+#include "daynightratio.h"
 
 #define PP(x) "("<<(x).X<<","<<(x).Y<<","<<(x).Z<<")"
 
 Environment::Environment():
-	m_time_of_day(9000)
+	m_time_of_day(9000),
+	m_time_of_day_f(9000./24000),
+	m_time_of_day_speed(0),
+	m_time_counter(0)
 {
 }
 
@@ -192,15 +199,33 @@ void Environment::printPlayers(std::ostream &o)
 	}
 }
 
-/*void Environment::setDayNightRatio(u32 r)
-{
-	getDayNightRatio() = r;
-}*/
-
 u32 Environment::getDayNightRatio()
 {
-	//return getDayNightRatio();
 	return time_to_daynight_ratio(m_time_of_day);
+}
+
+void Environment::stepTimeOfDay(float dtime)
+{
+	m_time_counter += dtime;
+	f32 speed = m_time_of_day_speed * 24000./(24.*3600);
+	u32 units = (u32)(m_time_counter*speed);
+	m_time_counter -= (f32)units / speed;
+	bool sync_f = false;
+	if(units > 0){
+		// Sync at overflow
+		if(m_time_of_day + units >= 24000)
+			sync_f = true;
+		m_time_of_day = (m_time_of_day + units) % 24000;
+		if(sync_f)
+			m_time_of_day_f = (float)m_time_of_day / 24000.0;
+	}
+	if(!sync_f){
+		m_time_of_day_f += m_time_of_day_speed/24/3600*dtime;
+		if(m_time_of_day_f > 1.0)
+			m_time_of_day_f -= 1.0;
+		if(m_time_of_day_f < 0.0)
+			m_time_of_day_f += 1.0;
+	}
 }
 
 /*
@@ -454,7 +479,7 @@ void ServerEnvironment::deSerializePlayers(const std::string &savedir)
 		// Full path to this file
 		std::string path = players_path + "/" + player_files[i].name;
 
-		infostream<<"Checking player file "<<path<<std::endl;
+		//infostream<<"Checking player file "<<path<<std::endl;
 
 		// Load player to see what is its name
 		ServerRemotePlayer testplayer(this);
@@ -475,8 +500,8 @@ void ServerEnvironment::deSerializePlayers(const std::string &savedir)
 					<<testplayer.getName()<<std::endl;
 		}
 
-		infostream<<"Loaded test player with name "<<testplayer.getName()
-				<<std::endl;
+		/*infostream<<"Loaded test player with name "<<testplayer.getName()
+				<<std::endl;*/
 		
 		// Search for the player
 		std::string playername = testplayer.getName();
@@ -484,7 +509,7 @@ void ServerEnvironment::deSerializePlayers(const std::string &savedir)
 		bool newplayer = false;
 		if(player == NULL)
 		{
-			infostream<<"Is a new player"<<std::endl;
+			//infostream<<"Is a new player"<<std::endl;
 			player = new ServerRemotePlayer(this);
 			newplayer = true;
 		}
@@ -493,7 +518,7 @@ void ServerEnvironment::deSerializePlayers(const std::string &savedir)
 
 		// Load player
 		{
-			infostream<<"Reading player "<<testplayer.getName()<<" from "
+			verbosestream<<"Reading player "<<testplayer.getName()<<" from "
 					<<path<<std::endl;
 			// Open file and deserialize
 			std::ifstream is(path.c_str(), std::ios_base::binary);
@@ -890,8 +915,8 @@ void ServerEnvironment::step(float dtime)
 	
 	//TimeTaker timer("ServerEnv step");
 
-	// Get some settings
-	bool footprints = g_settings->getBool("footprints");
+	/* Step time of day */
+	stepTimeOfDay(dtime);
 
 	/*
 		Increment game time
@@ -921,26 +946,6 @@ void ServerEnvironment::step(float dtime)
 			
 			// Move
 			player->move(dtime, *m_map, 100*BS);
-			
-			/*
-				Add footsteps to grass
-			*/
-			if(footprints)
-			{
-				// Get node that is at BS/4 under player
-				v3s16 bottompos = floatToInt(playerpos + v3f(0,-BS/4,0), BS);
-				try{
-					MapNode n = m_map->getNode(bottompos);
-					if(n.getContent() == LEGN(m_gamedef->ndef(), "CONTENT_GRASS"))
-					{
-						n.setContent(LEGN(m_gamedef->ndef(), "CONTENT_GRASS_FOOTSTEPS"));
-						m_map->setNode(bottompos, n);
-					}
-				}
-				catch(InvalidPositionException &e)
-				{
-				}
-			}
 		}
 	}
 
@@ -1806,6 +1811,8 @@ void ServerEnvironment::deactivateFarObjects(bool force_delete)
 
 #ifndef SERVER
 
+#include "clientsimpleobject.h"
+
 /*
 	ClientEnvironment
 */
@@ -1831,8 +1838,24 @@ ClientEnvironment::~ClientEnvironment()
 		delete i.getNode()->getValue();
 	}
 
+	for(core::list<ClientSimpleObject*>::Iterator
+			i = m_simple_objects.begin(); i != m_simple_objects.end(); i++)
+	{
+		delete *i;
+	}
+
 	// Drop/delete map
 	m_map->drop();
+}
+
+Map & ClientEnvironment::getMap()
+{
+	return *m_map;
+}
+
+ClientMap & ClientEnvironment::getClientMap()
+{
+	return *m_map;
 }
 
 void ClientEnvironment::addPlayer(Player *player)
@@ -1863,9 +1886,11 @@ void ClientEnvironment::step(float dtime)
 {
 	DSTACK(__FUNCTION_NAME);
 
+	/* Step time of day */
+	stepTimeOfDay(dtime);
+
 	// Get some settings
 	bool free_move = g_settings->getBool("free_move");
-	bool footprints = g_settings->getBool("footprints");
 
 	// Get local player
 	LocalPlayer *lplayer = getLocalPlayer();
@@ -2050,34 +2075,6 @@ void ClientEnvironment::step(float dtime)
 			light = blend_light(getDayNightRatio(), LIGHT_SUN, 0);
 		}
 		player->updateLight(light);
-
-		/*
-			Add footsteps to grass
-		*/
-		if(footprints)
-		{
-			// Get node that is at BS/4 under player
-			v3s16 bottompos = floatToInt(playerpos + v3f(0,-BS/4,0), BS);
-			try{
-				MapNode n = m_map->getNode(bottompos);
-				if(n.getContent() == LEGN(m_gamedef->ndef(), "CONTENT_GRASS"))
-				{
-					n.setContent(LEGN(m_gamedef->ndef(), "CONTENT_GRASS_FOOTSTEPS"));
-					m_map->setNode(bottompos, n);
-					// Update mesh on client
-					if(m_map->mapType() == MAPTYPE_CLIENT)
-					{
-						v3s16 p_blocks = getNodeBlockPos(bottompos);
-						MapBlock *b = m_map->getBlockNoCreate(p_blocks);
-						//b->updateMesh(getDayNightRatio());
-						b->setMeshExpired(true);
-					}
-				}
-			}
-			catch(InvalidPositionException &e)
-			{
-			}
-		}
 	}
 	
 	/*
@@ -2108,16 +2105,27 @@ void ClientEnvironment::step(float dtime)
 			obj->updateLight(light);
 		}
 	}
-}
 
-void ClientEnvironment::updateMeshes(v3s16 blockpos)
-{
-	m_map->updateMeshes(blockpos, getDayNightRatio());
+	/*
+		Step and handle simple objects
+	*/
+	for(core::list<ClientSimpleObject*>::Iterator
+			i = m_simple_objects.begin(); i != m_simple_objects.end();)
+	{
+		ClientSimpleObject *simple = *i;
+		core::list<ClientSimpleObject*>::Iterator cur = i;
+		i++;
+		simple->step(dtime);
+		if(simple->m_to_be_removed){
+			delete simple;
+			m_simple_objects.erase(cur);
+		}
+	}
 }
-
-void ClientEnvironment::expireMeshes(bool only_daynight_diffed)
+	
+void ClientEnvironment::addSimpleObject(ClientSimpleObject *simple)
 {
-	m_map->expireMeshes(only_daynight_diffed);
+	m_simple_objects.push_back(simple);
 }
 
 ClientActiveObject* ClientEnvironment::getActiveObject(u16 id)
@@ -2225,7 +2233,7 @@ void ClientEnvironment::addActiveObject(u16 id, u8 type,
 
 void ClientEnvironment::removeActiveObject(u16 id)
 {
-	infostream<<"ClientEnvironment::removeActiveObject(): "
+	verbosestream<<"ClientEnvironment::removeActiveObject(): "
 			<<"id="<<id<<std::endl;
 	ClientActiveObject* obj = getActiveObject(id);
 	if(obj == NULL)

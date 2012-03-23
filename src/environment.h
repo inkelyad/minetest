@@ -45,6 +45,7 @@ class ServerActiveObject;
 typedef struct lua_State lua_State;
 class ITextureSource;
 class IGameDef;
+class ClientMap;
 
 class Environment
 {
@@ -73,27 +74,39 @@ public:
 	core::list<Player*> getPlayers(bool ignore_disconnected);
 	void printPlayers(std::ostream &o);
 	
-	//void setDayNightRatio(u32 r);
 	u32 getDayNightRatio();
 	
 	// 0-23999
 	virtual void setTimeOfDay(u32 time)
 	{
 		m_time_of_day = time;
+		m_time_of_day_f = (float)time / 24000.0;
 	}
 
 	u32 getTimeOfDay()
-	{
-		return m_time_of_day;
-	}
+	{ return m_time_of_day; }
+
+	float getTimeOfDayF()
+	{ return m_time_of_day_f; }
+
+	void stepTimeOfDay(float dtime);
+
+	void setTimeOfDaySpeed(float speed)
+	{ m_time_of_day_speed = speed; }
+	
+	float getTimeOfDaySpeed()
+	{ return m_time_of_day_speed; }
 
 protected:
 	// peer_ids in here should be unique, except that there may be many 0s
 	core::list<Player*> m_players;
-	// Brightness
-	//u32 m_daynight_ratio;
 	// Time of day in milli-hours (0-23999); determines day and night
 	u32 m_time_of_day;
+	// Time of day in 0...1
+	float m_time_of_day_f;
+	float m_time_of_day_speed;
+	// Used to buffer dtime for adding to m_time_of_day
+	float m_time_counter;
 };
 
 /*
@@ -356,6 +369,7 @@ private:
 #ifndef SERVER
 
 #include "clientobject.h"
+class ClientSimpleObject;
 
 /*
 	The client-side environment.
@@ -392,11 +406,8 @@ public:
 			IrrlichtDevice *device);
 	~ClientEnvironment();
 
-	Map & getMap()
-	{ return *m_map; }
-
-	ClientMap & getClientMap()
-	{ return *m_map; }
+	Map & getMap();
+	ClientMap & getClientMap();
 
 	IGameDef *getGameDef()
 	{ return m_gamedef; }
@@ -406,23 +417,11 @@ public:
 	virtual void addPlayer(Player *player);
 	LocalPlayer * getLocalPlayer();
 	
-	// Slightly deprecated
-	void updateMeshes(v3s16 blockpos);
-	void expireMeshes(bool only_daynight_diffed);
+	/*
+		ClientSimpleObjects
+	*/
 
-	void setTimeOfDay(u32 time)
-	{
-		u32 old_dr = getDayNightRatio();
-
-		Environment::setTimeOfDay(time);
-
-		if(getDayNightRatio() != old_dr)
-		{
-			/*infostream<<"ClientEnvironment: DayNightRatio changed"
-					<<" -> expiring meshes"<<std::endl;*/
-			expireMeshes(true);
-		}
-	}
+	void addSimpleObject(ClientSimpleObject *simple);
 
 	/*
 		ActiveObjects
@@ -469,6 +468,7 @@ private:
 	IGameDef *m_gamedef;
 	IrrlichtDevice *m_irr;
 	core::map<u16, ClientActiveObject*> m_active_objects;
+	core::list<ClientSimpleObject*> m_simple_objects;
 	Queue<ClientEnvEvent> m_client_event_queue;
 	IntervalLimiter m_active_object_light_update_interval;
 	IntervalLimiter m_lava_hurt_interval;

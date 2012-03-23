@@ -28,7 +28,6 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "common_irrlicht.h"
 #include "mapnode.h"
-#include "mapblock_nodemod.h"
 #include "constants.h"
 #include "voxel.h"
 #include "utility.h" // Needed for UniqueQueue, a member of Map
@@ -38,9 +37,9 @@ extern "C" {
 	#include "sqlite3.h"
 }
 
+class ClientMap;
 class MapSector;
 class ServerMapSector;
-class ClientMapSector;
 class MapBlock;
 class NodeMetadata;
 class IGameDef;
@@ -468,164 +467,6 @@ private:
 	sqlite3_stmt *m_database_write;
 	sqlite3_stmt *m_database_list;
 };
-
-/*
-	ClientMap stuff
-*/
-
-#ifndef SERVER
-
-struct MapDrawControl
-{
-	MapDrawControl():
-		range_all(false),
-		wanted_range(50),
-		wanted_max_blocks(0),
-		wanted_min_range(0),
-		blocks_drawn(0),
-		blocks_would_have_drawn(0)
-	{
-	}
-	// Overrides limits by drawing everything
-	bool range_all;
-	// Wanted drawing range
-	float wanted_range;
-	// Maximum number of blocks to draw
-	u32 wanted_max_blocks;
-	// Blocks in this range are drawn regardless of number of blocks drawn
-	float wanted_min_range;
-	// Number of blocks rendered is written here by the renderer
-	u32 blocks_drawn;
-	// Number of blocks that would have been drawn in wanted_range
-	u32 blocks_would_have_drawn;
-};
-
-class Client;
-class ITextureSource;
-
-/*
-	ClientMap
-	
-	This is the only map class that is able to render itself on screen.
-*/
-
-class ClientMap : public Map, public scene::ISceneNode
-{
-public:
-	ClientMap(
-			Client *client,
-			IGameDef *gamedef,
-			MapDrawControl &control,
-			scene::ISceneNode* parent,
-			scene::ISceneManager* mgr,
-			s32 id
-	);
-
-	~ClientMap();
-
-	s32 mapType() const
-	{
-		return MAPTYPE_CLIENT;
-	}
-
-	void drop()
-	{
-		ISceneNode::drop();
-	}
-
-	void updateCamera(v3f pos, v3f dir, f32 fov)
-	{
-		JMutexAutoLock lock(m_camera_mutex);
-		m_camera_position = pos;
-		m_camera_direction = dir;
-		m_camera_fov = fov;
-	}
-
-	/*
-		Forcefully get a sector from somewhere
-	*/
-	MapSector * emergeSector(v2s16 p);
-
-	//void deSerializeSector(v2s16 p2d, std::istream &is);
-
-	/*
-		ISceneNode methods
-	*/
-
-	virtual void OnRegisterSceneNode();
-
-	virtual void render()
-	{
-		video::IVideoDriver* driver = SceneManager->getVideoDriver();
-		driver->setTransform(video::ETS_WORLD, AbsoluteTransformation);
-		renderMap(driver, SceneManager->getSceneNodeRenderPass());
-	}
-	
-	virtual const core::aabbox3d<f32>& getBoundingBox() const
-	{
-		return m_box;
-	}
-
-	void renderMap(video::IVideoDriver* driver, s32 pass);
-
-	void renderPostFx();
-
-	/*
-		Methods for setting temporary modifications to nodes for
-		drawing.
-
-		Returns true if something changed.
-		
-		All blocks whose mesh could have been changed are inserted
-		to affected_blocks.
-	*/
-	bool setTempMod(v3s16 p, NodeMod mod,
-			core::map<v3s16, MapBlock*> *affected_blocks=NULL);
-	bool clearTempMod(v3s16 p,
-			core::map<v3s16, MapBlock*> *affected_blocks=NULL);
-	// Efficient implementation needs a cache of TempMods
-	//void clearTempMods();
-
-	void expireMeshes(bool only_daynight_diffed);
-	
-	/*
-		Update the faces of the given block and blocks on the
-		leading edge, without threading. Rarely used.
-	*/
-	void updateMeshes(v3s16 blockpos, u32 daynight_ratio);
-	
-	// Update meshes that touch the node
-	//void updateNodeMeshes(v3s16 nodepos, u32 daynight_ratio);
-
-	// For debug printing
-	virtual void PrintInfo(std::ostream &out);
-	
-	// Check if sector was drawn on last render()
-	bool sectorWasDrawn(v2s16 p)
-	{
-		return (m_last_drawn_sectors.find(p) != NULL);
-	}
-	
-private:
-	Client *m_client;
-	
-	core::aabbox3d<f32> m_box;
-	
-	// This is the master heightmap mesh
-	//scene::SMesh *mesh;
-	//JMutex mesh_mutex;
-	
-	MapDrawControl &m_control;
-
-	v3f m_camera_position;
-	v3f m_camera_direction;
-	f32 m_camera_fov;
-	JMutex m_camera_mutex;
-	
-	core::map<v2s16, bool> m_last_drawn_sectors;
-};
-
-#endif
 
 class MapVoxelManipulator : public VoxelManipulator
 {

@@ -1,7 +1,7 @@
 Minetest-c55
 ---------------
 An InfiniMiner/Minecraft inspired game.
-Copyright (c) 2010-2011 Perttu Ahola <celeron55@gmail.com>
+Copyright (c) 2010-2012 Perttu Ahola <celeron55@gmail.com>
 (see source files for other contributors)
 
 Further documentation:
@@ -100,6 +100,7 @@ Compiling on Windows:
 	- Make sure you have CMake and a compiler installed.
 	- Download all the other stuff to DIR and extract them into there.
 	  ("extract here", not "extract to packagename/")
+	  NOTE: zlib125dll.zip needs to be extracted into zlib125dll
 	- All those packages contain a nice base directory in them, which
 	  should end up being the direct subdirectories of DIR.
 	- You will end up with a directory structure like this (+=dir, -=file):
@@ -176,24 +177,37 @@ Compiling on Windows:
 	If using MinGW:
 		- Using the command line, browse to the build directory and run 'make'
 		  (or mingw32-make or whatever it happens to be)
+		- You may need to copy some of the downloaded DLLs into bin/, see what
+		  running the produced executable tells you it doesn't have.
 		- You should now have a working game with the executable in
 			DIR/minetest/bin/minetest.exe
 
 Windows releases of minetest are built using a bat script like this:
 --------------------------------------------------------------------
 
+set sourcedir=%CD%
 set installpath="C:\tmp\minetest_install"
 set irrlichtpath="C:\tmp\irrlicht-1.7.2"
 
-set sourcedir=%CD%
 set builddir=%sourcedir%\bvc10
 mkdir %builddir%
 pushd %builddir%
 cmake %sourcedir% -G "Visual Studio 10" -DIRRLICHT_SOURCE_DIR=%irrlichtpath% -DRUN_IN_PLACE=1 -DCMAKE_INSTALL_PREFIX=%installpath%
+if %errorlevel% neq 0 goto fail
 "C:\WINDOWS\Microsoft.NET\Framework\v4.0.30319\MSBuild.exe" ALL_BUILD.vcxproj /p:Configuration=Release
+if %errorlevel% neq 0 goto fail
 "C:\WINDOWS\Microsoft.NET\Framework\v4.0.30319\MSBuild.exe" INSTALL.vcxproj /p:Configuration=Release
+if %errorlevel% neq 0 goto fail
 "C:\WINDOWS\Microsoft.NET\Framework\v4.0.30319\MSBuild.exe" PACKAGE.vcxproj /p:Configuration=Release
+if %errorlevel% neq 0 goto fail
 popd
+echo Finished.
+exit /b 0
+
+:fail
+popd
+echo Failed.
+exit /b 1
 
 License of Minetest-c55 textures and sounds
 -------------------------------------------
@@ -275,5 +289,23 @@ THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 IN THE SOFTWARE.
+
+
+Fonts
+---------------
+
+DejaVu Sans Mono:
+
+  Fonts are (c) Bitstream (see below). DejaVu changes are in public domain.
+  Glyphs imported from Arev fonts are (c) Tavmjong Bah (see below)
+
+  Bitstream Vera Fonts Copyright:
+
+  Copyright (c) 2003 by Bitstream, Inc. All Rights Reserved. Bitstream Vera is
+  a trademark of Bitstream, Inc.
+
+  Arev Fonts Copyright:
+
+  Copyright (c) 2006 by Tavmjong Bah. All Rights Reserved.
 
 

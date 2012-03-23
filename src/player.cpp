@@ -293,8 +293,8 @@ void LocalPlayer::move(f32 dtime, Map &map, f32 pos_max_d,
 	// This should always apply, otherwise there are glitches
 	assert(d > pos_max_d);
 
-	float player_radius = BS*0.35;
-	float player_height = BS*1.7;
+	float player_radius = BS*0.30;
+	float player_height = BS*1.55;
 	
 	// Maximum distance over border for sneaking
 	f32 sneak_max = BS*0.4;

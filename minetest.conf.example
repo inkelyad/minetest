@@ -42,6 +42,8 @@
 # Go down ladder / go down in fly mode / go fast in fast mode
 #keymap_special1 = KEY_KEY_E
 #keymap_chat = KEY_KEY_T
+#keymap_cmd = /
+#keyman_console = KEY_F10
 #keymap_rangeselect = KEY_KEY_R
 #keymap_freemove = KEY_KEY_K
 #keymap_fastmove = KEY_KEY_J
@@ -104,11 +106,17 @@
 #screenshot_path = .
 # Amount of view bobbing (0 = no view bobbing, 1.0 = normal, 2.0 = double)
 #view_bobbing_amount = 1.0
+# In-game chat console background color (R,G,B)
+#console_color = (0,0,0)
+# In-game chat console background alpha (opaqueness, between 0 and 255)
+#console_alpha = 200
 
 #
 # Server stuff
 #
 
+# Default game (default when creating a new world)
+#default_game = mesetint
 # Map directory (everything in the world is stored here)
 #map-dir = /custom/map
 # Message of the Day
@@ -154,6 +162,8 @@
 #time_speed = 72
 #server_unload_unused_data_timeout = 29
 #server_map_save_interval = 5.3
+# To reduce lag, block transfers are slowed down when a player is building something.
+# This determines how long they are slowed down after placing or removing a node.
 #full_block_send_enable_min_time_from_building = 2.0
 # Set to true to enable experimental features or stuff that is tested
 # (varies from version to version, usually not useful at all)

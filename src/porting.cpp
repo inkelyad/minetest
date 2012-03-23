@@ -27,6 +27,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "config.h"
 #include "debug.h"
 #include "filesys.h"
+#include "log.h"
 
 #ifdef __APPLE__
 	#include "CoreFoundation/CoreFoundation.h"
@@ -71,7 +72,6 @@ void sigint_handler(int sig)
 
 void signal_handler_init(void)
 {
-	dstream<<"signal_handler_init()"<<std::endl;
 	(void)signal(SIGINT, sigint_handler);
 }
 
@@ -114,7 +114,6 @@ void signal_handler_init(void)
 	
 void signal_handler_init(void)
 {
-	dstream<<"signal_handler_init()"<<std::endl;
 	SetConsoleCtrlHandler( (PHANDLER_ROUTINE)event_handler,TRUE);
 }
 
@@ -124,12 +123,13 @@ void signal_handler_init(void)
 	Path mangler
 */
 
-std::string path_data = ".." DIR_DELIM "data";
-std::string path_userdata = "..";
+// Default to RUN_IN_PLACE style relative paths
+std::string path_share = "..";
+std::string path_user = "..";
 
 std::string getDataPath(const char *subpath)
 {
-	return path_data + DIR_DELIM + subpath;
+	return path_share + DIR_DELIM + subpath;
 }
 
 void pathRemoveFile(char *path, char delim)
@@ -151,7 +151,7 @@ void initializePaths()
 		Use relative paths if RUN_IN_PLACE
 	*/
 
-	dstream<<"Using relative paths (RUN_IN_PLACE)"<<std::endl;
+	infostream<<"Using relative paths (RUN_IN_PLACE)"<<std::endl;
 
 	/*
 		Windows
@@ -163,16 +163,13 @@ void initializePaths()
 	char buf[buflen];
 	DWORD len;
 	
-	// Find path of executable and set path_data relative to it
+	// Find path of executable and set path_share relative to it
 	len = GetModuleFileName(GetModuleHandle(NULL), buf, buflen);
 	assert(len < buflen);
 	pathRemoveFile(buf, '\\');
 
-	// Use "./bin/../data"
-	path_data = std::string(buf) + DIR_DELIM ".." DIR_DELIM "data";
-		
-	// Use "./bin/.."
-	path_userdata = std::string(buf) + DIR_DELIM "..";
+	path_share = std::string(buf) + "\\..";
+	path_user = std::string(buf) + "\\..";
 
 	/*
 		Linux
@@ -187,11 +184,8 @@ void initializePaths()
 	
 	pathRemoveFile(buf, '/');
 
-	// Use "./bin/../data"
-	path_data = std::string(buf) + "/../data";
-		
-	// Use "./bin/../"
-	path_userdata = std::string(buf) + "/..";
+	path_share = std::string(buf) + "/..";
+	path_user = std::string(buf) + "/..";
 	
 	/*
 		OS X
@@ -201,8 +195,8 @@ void initializePaths()
 	//TODO: Get path of executable. This assumes working directory is bin/
 	dstream<<"WARNING: Relative path not properly supported on OS X and FreeBSD"
 			<<std::endl;
-	path_data = std::string("../data");
-	path_userdata = std::string("..");
+	path_share = std::string("..");
+	path_user = std::string("..");
 
 	#endif
 
@@ -212,7 +206,7 @@ void initializePaths()
 		Use platform-specific paths otherwise
 	*/
 
-	dstream<<"Using system-wide paths (NOT RUN_IN_PLACE)"<<std::endl;
+	infostream<<"Using system-wide paths (NOT RUN_IN_PLACE)"<<std::endl;
 
 	/*
 		Windows
@@ -224,19 +218,18 @@ void initializePaths()
 	char buf[buflen];
 	DWORD len;
 	
-	// Find path of executable and set path_data relative to it
+	// Find path of executable and set path_share relative to it
 	len = GetModuleFileName(GetModuleHandle(NULL), buf, buflen);
 	assert(len < buflen);
 	pathRemoveFile(buf, '\\');
 	
-	// Use "./bin/../data"
-	path_data = std::string(buf) + DIR_DELIM ".." DIR_DELIM "data";
-	//path_data = std::string(buf) + "/../share/" + PROJECT_NAME;
+	// Use ".\bin\.."
+	path_share = std::string(buf) + "\\..";
 		
 	// Use "C:\Documents and Settings\user\Application Data\<PROJECT_NAME>"
 	len = GetEnvironmentVariable("APPDATA", buf, buflen);
 	assert(len < buflen);
-	path_userdata = std::string(buf) + DIR_DELIM + PROJECT_NAME;
+	path_user = std::string(buf) + DIR_DELIM + PROJECT_NAME;
 
 	/*
 		Linux
@@ -251,15 +244,15 @@ void initializePaths()
 	
 	pathRemoveFile(buf, '/');
 
-	path_data = std::string(buf) + "/../share/" + PROJECT_NAME;
-	//path_data = std::string(INSTALL_PREFIX) + "/share/" + PROJECT_NAME;
-	if (!fs::PathExists(path_data)) {
-		dstream<<"WARNING: data path " << path_data << " not found!";
-		path_data = std::string(buf) + "/../data";
-		dstream<<" Trying " << path_data << std::endl;
+	path_share = std::string(buf) + "/../share/" + PROJECT_NAME;
+	//path_share = std::string(INSTALL_PREFIX) + "/share/" + PROJECT_NAME;
+	if (!fs::PathExists(path_share)) {
+		dstream<<"WARNING: system-wide share not found at \""<<path_share<<"\"";
+		path_share = std::string(buf) + "/..";
+		dstream<<"WARNING: Using \""<<path_share<<"\" instead."<<std::endl;
 	}
 	
-	path_userdata = std::string(getenv("HOME")) + "/." + PROJECT_NAME;
+	path_user = std::string(getenv("HOME")) + "/." + PROJECT_NAME;
 
 	/*
 		OS X
@@ -276,7 +269,7 @@ void initializePaths()
 	{
 		dstream<<"Bundle resource path: "<<path<<std::endl;
 		//chdir(path);
-		path_data = std::string(path) + "/data";
+		path_share = std::string(path) + "/share";
 	}
 	else
     {
@@ -285,19 +278,16 @@ void initializePaths()
     }
     CFRelease(resources_url);
 	
-	path_userdata = std::string(getenv("HOME")) + "/Library/Application Support/" + PROJECT_NAME;
+	path_user = std::string(getenv("HOME")) + "/Library/Application Support/" + PROJECT_NAME;
 
 	#elif defined(__FreeBSD__)
 
-	path_data = std::string(INSTALL_PREFIX) + "/share/" + PROJECT_NAME;
-	path_userdata = std::string(getenv("HOME")) + "/." + PROJECT_NAME;
+	path_share = std::string(INSTALL_PREFIX) + "/share/" + PROJECT_NAME;
+	path_user = std::string(getenv("HOME")) + "/." + PROJECT_NAME;
     
 	#endif
 
 #endif // RUN_IN_PLACE
-
-	dstream<<"path_data = "<<path_data<<std::endl;
-	dstream<<"path_userdata = "<<path_userdata<<std::endl;
 }
 
 } //namespace porting

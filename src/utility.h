@@ -694,6 +694,46 @@ private:
 	u32 *m_result;
 };
 
+// Tests if two strings are equal, optionally case insensitive
+inline bool str_equal(const std::wstring& s1, const std::wstring& s2,
+		bool case_insensitive = false)
+{
+	if(case_insensitive)
+	{
+		if(s1.size() != s2.size())
+			return false;
+		for(size_t i = 0; i < s1.size(); ++i)
+			if(tolower(s1[i]) != tolower(s2[i]))
+				return false;
+		return true;
+	}
+	else
+	{
+		return s1 == s2;
+	}
+}
+
+// Tests if the second string is a prefix of the first, optionally case insensitive
+inline bool str_starts_with(const std::wstring& str, const std::wstring& prefix,
+		bool case_insensitive = false)
+{
+	if(str.size() < prefix.size())
+		return false;
+	if(case_insensitive)
+	{
+		for(size_t i = 0; i < prefix.size(); ++i)
+			if(tolower(str[i]) != tolower(prefix[i]))
+				return false;
+	}
+	else
+	{
+		for(size_t i = 0; i < prefix.size(); ++i)
+			if(str[i] != prefix[i])
+				return false;
+	}
+	return true;
+}
+
 // Calculates the borders of a "d-radius" cube
 inline void getFacePositions(core::list<v3s16> &list, u16 d)
 {
@@ -1009,22 +1049,25 @@ inline s32 mystoi(const std::string &s, s32 min, s32 max)
 // MSVC2010 includes it's own versions of these
 //#if !defined(_MSC_VER) || _MSC_VER < 1600
 
-inline s32 mystoi(std::string s)
+inline s32 mystoi(const std::string &s)
 {
 	return atoi(s.c_str());
 }
 
-inline s32 mystoi(std::wstring s)
+inline s32 mystoi(const std::wstring &s)
 {
 	return atoi(wide_to_narrow(s).c_str());
 }
 
-inline float mystof(std::string s)
+inline float mystof(const std::string &s)
 {
-	float f;
+	// This crap causes a segfault in certain cases on MinGW
+	/*float f;
 	std::istringstream ss(s);
 	ss>>f;
-	return f;
+	return f;*/
+	// This works in that case
+	return atof(s.c_str());
 }
 
 //#endif
@@ -1566,6 +1609,15 @@ inline std::string wrap_rows(const std::string &from, u32 rowlen)
 #define MYMAX(a,b) ((a)>(b)?(a):(b))
 
 /*
+	Returns nearest 32-bit integer for given floating point number.
+	<cmath> and <math.h> in VC++ don't provide round().
+*/
+inline s32 myround(f32 f)
+{
+	return floor(f + 0.5);
+}
+
+/*
 	Returns integer position of node in given floating point position
 */
 inline v3s16 floatToInt(v3f p, f32 d)
@@ -1701,22 +1753,6 @@ std::string serializeJsonString(const std::string &plain);
 std::string deSerializeJsonString(std::istream &is);
 
 //
-
-inline u32 time_to_daynight_ratio(u32 time_of_day)
-{
-	const s32 daylength = 16;
-	const s32 nightlength = 6;
-	const s32 daytimelength = 8;
-	s32 d = daylength;
-	s32 t = (((time_of_day)%24000)/(24000/d));
-	if(t < nightlength/2 || t >= d - nightlength/2)
-		//return 300;
-		return 350;
-	else if(t >= d/2 - daytimelength/2 && t < d/2 + daytimelength/2)
-		return 1000;
-	else
-		return 750;
-}
 
 // Random helper. Usually d=BS
 inline core::aabbox3d<f32> getNodeBox(v3s16 p, float d)

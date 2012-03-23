@@ -40,6 +40,7 @@ void set_default_settings(Settings *settings)
 	settings->setDefault("keymap_special1", "KEY_KEY_E");
 	settings->setDefault("keymap_chat", "KEY_KEY_T");
 	settings->setDefault("keymap_cmd", "/");
+	settings->setDefault("keymap_console", "KEY_F10");
 	settings->setDefault("keymap_rangeselect", "KEY_KEY_R");
 	settings->setDefault("keymap_freemove", "KEY_KEY_K");
 	settings->setDefault("keymap_fastmove", "KEY_KEY_J");
@@ -50,10 +51,14 @@ void set_default_settings(Settings *settings)
 	settings->setDefault("keymap_toggle_update_camera", "KEY_F4");
 	settings->setDefault("keymap_toggle_debug", "KEY_F5");
 	settings->setDefault("keymap_toggle_profiler", "KEY_F6");
-	settings->setDefault("keymap_increase_viewing_range_min", "KEY_PRIOR");
-	settings->setDefault("keymap_decrease_viewing_range_min", "KEY_NEXT");
+	settings->setDefault("keymap_increase_viewing_range_min", "+");
+	settings->setDefault("keymap_decrease_viewing_range_min", "-");
 	// Some (temporary) keys for debugging
 	settings->setDefault("keymap_print_debug_stacks", "KEY_KEY_P");
+	settings->setDefault("keymap_quicktune_prev", "KEY_HOME");
+	settings->setDefault("keymap_quicktune_next", "KEY_END");
+	settings->setDefault("keymap_quicktune_dec", "KEY_NEXT");
+	settings->setDefault("keymap_quicktune_inc", "KEY_PRIOR");
 
 	// Show debug info by default?
 	#ifdef NDEBUG
@@ -66,7 +71,7 @@ void set_default_settings(Settings *settings)
 	settings->setDefault("fps_max", "60");
 	// A bit more than the server will send around the player, to make fog blend well
 	settings->setDefault("viewing_range_nodes_min", "35");
-	settings->setDefault("viewing_range_nodes_max", "128");
+	settings->setDefault("viewing_range_nodes_max", "160");
 	settings->setDefault("screenW", "800");
 	settings->setDefault("screenH", "600");
 	settings->setDefault("address", "");
@@ -91,9 +96,12 @@ void set_default_settings(Settings *settings)
 	settings->setDefault("view_bobbing_amount", "1.0");
 	settings->setDefault("enable_3d_clouds", "false");
 	settings->setDefault("opaque_water", "false");
+	settings->setDefault("console_color", "(0,0,0)");
+	settings->setDefault("console_alpha", "200");
 
 	// Server stuff
 	// "map-dir" doesn't exist by default.
+	settings->setDefault("default_game", "mesetint");
 	settings->setDefault("motd", "");
 	settings->setDefault("max_users", "100");
 	settings->setDefault("strict_protocol_version_checking", "true");
@@ -113,15 +121,16 @@ void set_default_settings(Settings *settings)
 	settings->setDefault("active_block_range", "2");
 	//settings->setDefault("max_simultaneous_block_sends_per_client", "1");
 	// This causes frametime jitter on client side, or does it?
-	settings->setDefault("max_simultaneous_block_sends_per_client", "2");
-	settings->setDefault("max_simultaneous_block_sends_server_total", "8");
-	settings->setDefault("max_block_send_distance", "7");
-	settings->setDefault("max_block_generate_distance", "5");
-	settings->setDefault("time_send_interval", "20");
+	settings->setDefault("max_simultaneous_block_sends_per_client", "4");
+	settings->setDefault("max_simultaneous_block_sends_server_total", "20");
+	settings->setDefault("max_block_send_distance", "10");
+	settings->setDefault("max_block_generate_distance", "6");
+	settings->setDefault("time_send_interval", "5");
 	settings->setDefault("time_speed", "96");
 	settings->setDefault("server_unload_unused_data_timeout", "29");
 	settings->setDefault("server_map_save_interval", "5.3");
 	settings->setDefault("full_block_send_enable_min_time_from_building", "2.0");
 	settings->setDefault("enable_experimental", "false");
+	settings->setDefault("dedicated_server_step", "0.05");
 }
 

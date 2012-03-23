@@ -25,8 +25,9 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include <string>
 #include <iostream>
 #include <set>
+#include "itemgroup.h"
 class IGameDef;
-struct ToolDiggingProperties;
+struct ToolCapabilities;
 
 /*
 	Base item definition
@@ -63,7 +64,8 @@ struct ItemDefinition
 	bool usable;
 	bool liquids_pointable;
 	// May be NULL. If non-NULL, deleted by destructor
-	ToolDiggingProperties *tool_digging_properties;
+	ToolCapabilities *tool_capabilities;
+	ItemGroupList groups;
 
 	/*
 		Cached stuff

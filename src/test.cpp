@@ -68,6 +68,7 @@ void define_some_nodes(IWritableItemDefManager *idef, IWritableNodeDefManager *n
 	itemdef.type = ITEM_NODE;
 	itemdef.name = "default:stone";
 	itemdef.description = "Stone";
+	itemdef.groups["cracky"] = 3;
 	itemdef.inventory_image = "[inventorycube"
 		"{default_stone.png"
 		"{default_stone.png"
@@ -77,11 +78,6 @@ void define_some_nodes(IWritableItemDefManager *idef, IWritableNodeDefManager *n
 	for(int i = 0; i < 6; i++)
 		f.tname_tiles[i] = "default_stone.png";
 	f.is_ground_content = true;
-	f.material.diggability = DIGGABLE_NORMAL;
-	f.material.weight = 5.0;
-	f.material.crackiness = 1.0;
-	f.material.crumbliness = -0.1;
-	f.material.cuttability = -0.2;
 	idef->registerItem(itemdef);
 	ndef->set(i, f);
 
@@ -93,6 +89,7 @@ void define_some_nodes(IWritableItemDefManager *idef, IWritableNodeDefManager *n
 	itemdef.type = ITEM_NODE;
 	itemdef.name = "default:dirt_with_grass";
 	itemdef.description = "Dirt with grass";
+	itemdef.groups["crumbly"] = 3;
 	itemdef.inventory_image = "[inventorycube"
 		"{default_grass.png"
 		"{default_dirt.png&default_grass_side.png"
@@ -104,11 +101,6 @@ void define_some_nodes(IWritableItemDefManager *idef, IWritableNodeDefManager *n
 	for(int i = 2; i < 6; i++)
 		f.tname_tiles[i] = "default_dirt.png^default_grass_side.png";
 	f.is_ground_content = true;
-	f.material.diggability = DIGGABLE_NORMAL;
-	f.material.weight = 1.2;
-	f.material.crackiness = 0.0;
-	f.material.crumbliness = 1.2;
-	f.material.cuttability = -0.4;
 	idef->registerItem(itemdef);
 	ndef->set(i, f);
 }
@@ -1192,8 +1184,10 @@ struct TestConnection
 
 			infostream<<"Sending data (size="<<datasize<<"):";
 			for(int i=0; i<datasize && i<20; i++){
-				if(i%2==0) DEBUGPRINT(" ");
-				DEBUGPRINT("%.2X", ((int)((const char*)*data1)[i])&0xff);
+				if(i%2==0) infostream<<" ";
+				char buf[10];
+				snprintf(buf, 10, "%.2X", ((int)((const char*)*data1)[i])&0xff);
+				infostream<<buf;
 			}
 			if(datasize>20)
 				infostream<<"...";
@@ -1224,10 +1218,12 @@ struct TestConnection
 					<<", size="<<size
 					<<std::endl;
 
-			infostream<<"Received data (size="<<size<<"):";
+			infostream<<"Received data (size="<<size<<"): ";
 			for(int i=0; i<size && i<20; i++){
-				if(i%2==0) DEBUGPRINT(" ");
-				DEBUGPRINT("%.2X", ((int)(recvdata[i]))&0xff);
+				if(i%2==0) infostream<<" ";
+				char buf[10];
+				snprintf(buf, 10, "%.2X", ((int)(recvdata[i]))&0xff);
+				infostream<<buf;
 			}
 			if(size>20)
 				infostream<<"...";

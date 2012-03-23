@@ -34,11 +34,29 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "serverremoteplayer.h"
 #include "mods.h"
 #include "inventorymanager.h"
+#include "subgame.h"
 struct LuaState;
 typedef struct lua_State lua_State;
 class IWritableItemDefManager;
 class IWritableNodeDefManager;
 class IWritableCraftDefManager;
+
+class ServerError : public std::exception
+{
+public:
+	ServerError(const std::string &s)
+	{
+		m_s = "ServerError: ";
+		m_s += s;
+	}
+	virtual ~ServerError() throw()
+	{}
+	virtual const char * what() const throw()
+	{
+		return m_s.c_str();
+	}
+	std::string m_s;
+};
 
 /*
 	Some random functions
@@ -210,8 +228,6 @@ struct PlayerInfo
 	PlayerInfo();
 	void PrintLine(std::ostream *s);
 };
-
-u32 PIChecksum(core::list<PlayerInfo> &l);
 
 /*
 	Used for queueing and sorting block transfers in containers
@@ -390,10 +406,12 @@ public:
 	/*
 		NOTE: Every public method should be thread-safe
 	*/
-
+	
 	Server(
-		std::string mapsavedir,
-		std::string configpath
+		const std::string &path_world,
+		const std::string &path_config,
+		const SubgameSpec &gamespec,
+		bool simple_singleplayer_mode
 	);
 	~Server();
 	void start(unsigned short port);
@@ -408,11 +426,6 @@ public:
 
 	core::list<PlayerInfo> getPlayerInfo();
 
-	/*u32 getDayNightRatio()
-	{
-		return time_to_daynight_ratio(m_time_of_day.get());
-	}*/
-	
 	// Environment must be locked when called
 	void setTimeOfDay(u32 time)
 	{
@@ -447,32 +460,13 @@ public:
 		m_shutdown_requested = true;
 	}
 
-
 	// Envlock and conlock should be locked when calling this
 	void SendMovePlayer(Player *player);
 	
-	u64 getPlayerAuthPrivs(const std::string &name)
-	{
-		try{
-			return m_authmanager.getPrivs(name);
-		}
-		catch(AuthNotFoundException &e)
-		{
-			dstream<<"WARNING: Auth not found for "<<name<<std::endl;
-			return 0;
-		}
-	}
-
-	void setPlayerAuthPrivs(const std::string &name, u64 privs)
-	{
-		try{
-			return m_authmanager.setPrivs(name, privs);
-		}
-		catch(AuthNotFoundException &e)
-		{
-			dstream<<"WARNING: Auth not found for "<<name<<std::endl;
-		}
-	}
+	// Thread-safe
+	u64 getPlayerAuthPrivs(const std::string &name);
+	void setPlayerAuthPrivs(const std::string &name, u64 privs);
+	u64 getPlayerEffectivePrivs(const std::string &name);
 
 	// Changes a player's password, password must be given as plaintext
 	// If the player doesn't exist, a new entry is added to the auth manager
@@ -525,6 +519,13 @@ public:
 	IWritableCraftDefManager* getWritableCraftDefManager();
 
 	const ModSpec* getModSpec(const std::string &modname);
+	
+	std::string getWorldPath(){ return m_path_world; }
+
+	void setAsyncFatalError(const std::string &error)
+	{
+		m_async_fatal_error.set(error);
+	}
 
 private:
 
@@ -605,7 +606,7 @@ private:
 	{
 		Player *player = m_env->getPlayer(peer_id);
 		if(player == NULL)
-			return "[id="+itos(peer_id);
+			return "[id="+itos(peer_id)+"]";
 		return player->getName();
 	}
 
@@ -628,6 +629,19 @@ private:
 	/*
 		Variables
 	*/
+	
+	// World directory
+	std::string m_path_world;
+	// Path to user's configuration file ("" = no configuration file)
+	std::string m_path_config;
+	// Subgame specification
+	SubgameSpec m_gamespec;
+	// If true, do not allow multiple players and hide some multiplayer
+	// functionality
+	bool m_simple_singleplayer_mode;
+
+	// Thread can set; step() will throw as ServerError
+	MutexedVariable<std::string> m_async_fatal_error;
 	
 	// Some timers
 	float m_liquid_transform_timer;
@@ -692,10 +706,6 @@ private:
 		Time related stuff
 	*/
 
-	// 0-23999
-	//MutexedVariable<u32> m_time_of_day;
-	// Used to buffer dtime for adding to m_time_of_day
-	float m_time_counter;
 	// Timer for sending time of day over network
 	float m_time_of_day_send_timer;
 	// Uptime of server in seconds
@@ -722,12 +732,6 @@ private:
 	/*
 		Random stuff
 	*/
-
-	// Map directory
-	std::string m_mapsavedir;
-
-	// Configuration path ("" = no configuration file)
-	std::string m_configpath;
 	
 	// Mod parent directory paths
 	core::list<std::string> m_modspaths;

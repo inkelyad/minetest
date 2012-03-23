@@ -94,6 +94,8 @@ configure_file(
 )
 
 set(common_SRCS
+	quicktune.cpp
+	subgame.cpp
 	inventorymanager.cpp
 	mods.cpp
 	serverremoteplayer.cpp
@@ -116,7 +118,7 @@ set(common_SRCS
 	serverobject.cpp
 	noise.cpp
 	porting.cpp
-	materials.cpp
+	tool.cpp
 	defaultsettings.cpp
 	mapnode.cpp
 	voxel.cpp
@@ -157,6 +159,9 @@ endif()
 # Client sources
 set(minetest_SRCS
 	${common_SRCS}
+	sky.cpp
+	clientmap.cpp
+	content_cso.cpp
 	content_mapblock.cpp
 	content_cao.cpp
 	mesh.cpp
@@ -166,6 +171,7 @@ set(minetest_SRCS
 	camera.cpp
 	clouds.cpp
 	clientobject.cpp
+	chat.cpp
 	guiMainMenu.cpp
 	guiKeyChangeMenu.cpp
 	guiMessageMenu.cpp
@@ -174,6 +180,9 @@ set(minetest_SRCS
 	guiPauseMenu.cpp
 	guiPasswordChange.cpp
 	guiDeathScreen.cpp
+	guiChatConsole.cpp
+	guiCreateWorld.cpp
+	guiConfirmMenu.cpp
 	client.cpp
 	tile.cpp
 	game.cpp
@@ -183,7 +192,7 @@ set(minetest_SRCS
 # Server sources
 set(minetestserver_SRCS
 	${common_SRCS}
-	servermain.cpp
+	main.cpp
 )
 
 include_directories(
@@ -301,18 +310,8 @@ endif()
 # Installation
 #
 
-# Example configuration file
-# NOTE: Install is handled elsewhere
-#install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../minetest.conf.example" DESTINATION ${EXAMPLE_CONF_DIR})
-
 if(BUILD_CLIENT)
 	install(TARGETS ${PROJECT_NAME} DESTINATION ${BINDIR})
-
-	#file(GLOB images "${CMAKE_CURRENT_SOURCE_DIR}/../data/textures/*.png")
-	#install(FILES ${images} DESTINATION ${DATADIR}/textures)
-	#file(GLOB datasubstuff "${CMAKE_CURRENT_SOURCE_DIR}/../data/*")
-	#install(DIRECTORY "${datasubstuff}" DESTINATION ${DATADIR})
-	install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../data/" DESTINATION ${DATADIR})
 
 	if(USE_GETTEXT)
 		foreach(LOCALE ${GETTEXT_AVAILABLE_LOCALES})

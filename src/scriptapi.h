@@ -33,6 +33,7 @@ struct LuaEntityProperties;
 struct ItemStack;
 struct PointedThing;
 //class IGameDef;
+struct ToolCapabilities;
 
 void scriptapi_export(lua_State *L, Server *server);
 bool scriptapi_loadmod(lua_State *L, const std::string &scriptpath,
@@ -74,7 +75,8 @@ bool scriptapi_node_on_dig(lua_State *L, v3s16 p, MapNode node,
 
 /* luaentity */
 // Returns true if succesfully added into Lua; false otherwise.
-bool scriptapi_luaentity_add(lua_State *L, u16 id, const char *name,
+bool scriptapi_luaentity_add(lua_State *L, u16 id, const char *name);
+void scriptapi_luaentity_activate(lua_State *L, u16 id,
 		const std::string &staticdata);
 void scriptapi_luaentity_rm(lua_State *L, u16 id);
 std::string scriptapi_luaentity_get_staticdata(lua_State *L, u16 id);
@@ -82,7 +84,8 @@ void scriptapi_luaentity_get_properties(lua_State *L, u16 id,
 		LuaEntityProperties *prop);
 void scriptapi_luaentity_step(lua_State *L, u16 id, float dtime);
 void scriptapi_luaentity_punch(lua_State *L, u16 id,
-		ServerActiveObject *puncher, float time_from_last_punch);
+		ServerActiveObject *puncher, float time_from_last_punch,
+		const ToolCapabilities *toolcap, v3f dir);
 void scriptapi_luaentity_rightclick(lua_State *L, u16 id,
 		ServerActiveObject *clicker);
 

@@ -89,12 +89,6 @@ ContentFeatures::ContentFeatures()
 
 ContentFeatures::~ContentFeatures()
 {
-#ifndef SERVER
-	for(u16 j=0; j<CF_SPECIAL_COUNT; j++){
-		delete special_materials[j];
-		delete special_aps[j];
-	}
-#endif
 }
 
 void ContentFeatures::reset()
@@ -103,10 +97,6 @@ void ContentFeatures::reset()
 		Cached stuff
 	*/
 #ifndef SERVER
-	for(u16 j=0; j<CF_SPECIAL_COUNT; j++){
-		special_materials[j] = NULL;
-		special_aps[j] = NULL;
-	}
 	solidness = 2;
 	visual_solidness = 0;
 	backface_culling = true;
@@ -118,6 +108,9 @@ void ContentFeatures::reset()
 		      in builtin.lua
 	*/
 	name = "";
+	groups.clear();
+	// Unknown nodes can be dug
+	groups["dig_immediate"] = 2;
 	drawtype = NDT_NORMAL;
 	visual_scale = 1.0;
 	for(u32 i=0; i<6; i++)
@@ -144,18 +137,20 @@ void ContentFeatures::reset()
 	light_source = 0;
 	damage_per_second = 0;
 	selection_box = NodeBox();
-	material = MaterialProperties();
-	// Make unknown blocks diggable
-	material.diggability = DIGGABLE_CONSTANT;
-	material.constant_time = 0.5;
 	legacy_facedir_simple = false;
 	legacy_wallmounted = false;
 }
 
 void ContentFeatures::serialize(std::ostream &os)
 {
-	writeU8(os, 1); // version
+	writeU8(os, 2); // version
 	os<<serializeString(name);
+	writeU16(os, groups.size());
+	for(ItemGroupList::const_iterator
+			i = groups.begin(); i != groups.end(); i++){
+		os<<serializeString(i->first);
+		writeS16(os, i->second);
+	}
 	writeU8(os, drawtype);
 	writeF1000(os, visual_scale);
 	writeU8(os, 6);
@@ -188,7 +183,6 @@ void ContentFeatures::serialize(std::ostream &os)
 	writeU8(os, light_source);
 	writeU32(os, damage_per_second);
 	selection_box.serialize(os);
-	material.serialize(os);
 	writeU8(os, legacy_facedir_simple);
 	writeU8(os, legacy_wallmounted);
 }
@@ -196,9 +190,16 @@ void ContentFeatures::serialize(std::ostream &os)
 void ContentFeatures::deSerialize(std::istream &is)
 {
 	int version = readU8(is);
-	if(version != 1)
+	if(version != 2)
 		throw SerializationError("unsupported ContentFeatures version");
 	name = deSerializeString(is);
+	groups.clear();
+	u32 groups_size = readU16(is);
+	for(u32 i=0; i<groups_size; i++){
+		std::string name = deSerializeString(is);
+		int value = readS16(is);
+		groups[name] = value;
+	}
 	drawtype = (enum NodeDrawType)readU8(is);
 	visual_scale = readF1000(is);
 	if(readU8(is) != 6)
@@ -233,7 +234,6 @@ void ContentFeatures::deSerialize(std::istream &is)
 	light_source = readU8(is);
 	damage_per_second = readU32(is);
 	selection_box.deSerialize(is);
-	material.deSerialize(is);
 	legacy_facedir_simple = readU8(is);
 	legacy_wallmounted = readU8(is);
 }
@@ -360,7 +360,7 @@ public:
 	// IWritableNodeDefManager
 	virtual void set(content_t c, const ContentFeatures &def)
 	{
-		infostream<<"registerNode: registering content id \""<<c
+		verbosestream<<"registerNode: registering content id \""<<c
 				<<"\": name=\""<<def.name<<"\""<<std::endl;
 		assert(c <= MAX_CONTENT);
 		// Don't allow redefining CONTENT_IGNORE (but allow air)
@@ -412,9 +412,6 @@ public:
 		assert(name != "");
 		ContentFeatures f;
 		f.name = name;
-		// Make unknown blocks diggable
-		f.material.diggability = DIGGABLE_CONSTANT;
-		f.material.constant_time = 0.5;
 		return set(name, f);
 	}
 	virtual void updateAliases(IItemDefManager *idef)
@@ -521,38 +518,21 @@ public:
 					f->tiles[j].material_type = MATERIAL_ALPHA_SIMPLE;
 				else
 					f->tiles[j].material_type = MATERIAL_ALPHA_VERTEX;
+				f->tiles[j].material_flags = 0;
 				if(f->backface_culling)
 					f->tiles[j].material_flags |= MATERIAL_FLAG_BACKFACE_CULLING;
-				else
-					f->tiles[j].material_flags &= ~MATERIAL_FLAG_BACKFACE_CULLING;
 			}
-			// Special textures
+			// Special tiles
 			for(u16 j=0; j<CF_SPECIAL_COUNT; j++){
-				// Remove all stuff
-				if(f->special_aps[j]){
-					delete f->special_aps[j];
-					f->special_aps[j] = NULL;
-				}
-				if(f->special_materials[j]){
-					delete f->special_materials[j];
-					f->special_materials[j] = NULL;
-				}
-				// Skip if should not exist
-				if(f->mspec_special[j].tname == "")
-					continue;
-				// Create all stuff
-				f->special_aps[j] = new AtlasPointer(
-						tsrc->getTexture(f->mspec_special[j].tname));
-				f->special_materials[j] = new video::SMaterial;
-				f->special_materials[j]->setFlag(video::EMF_LIGHTING, false);
-				f->special_materials[j]->setFlag(video::EMF_BACK_FACE_CULLING,
-						f->mspec_special[j].backface_culling);
-				f->special_materials[j]->setFlag(video::EMF_BILINEAR_FILTER, false);
-				f->special_materials[j]->setFlag(video::EMF_FOG_ENABLE, true);
-				f->special_materials[j]->setTexture(0, f->special_aps[j]->atlas);
-				if(f->alpha != 255)
-					f->special_materials[j]->MaterialType =
-							video::EMT_TRANSPARENT_VERTEX_ALPHA;
+				f->special_tiles[j].texture = tsrc->getTexture(f->mspec_special[j].tname);
+				f->special_tiles[j].alpha = f->alpha;
+				if(f->alpha == 255)
+					f->special_tiles[j].material_type = MATERIAL_ALPHA_SIMPLE;
+				else
+					f->special_tiles[j].material_type = MATERIAL_ALPHA_VERTEX;
+				f->special_tiles[j].material_flags = 0;
+				if(f->mspec_special[j].backface_culling)
+					f->special_tiles[j].material_flags |= MATERIAL_FLAG_BACKFACE_CULLING;
 			}
 		}
 #endif

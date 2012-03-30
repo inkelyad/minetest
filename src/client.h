@@ -34,6 +34,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "gamedef.h"
 #include "inventorymanager.h"
 #include "filesys.h"
+#include "filecache.h"
 
 struct MeshMakeData;
 class MapBlockMesh;
@@ -44,6 +45,7 @@ class IWritableNodeDefManager;
 //class IWritableCraftDefManager;
 class ClientEnvironment;
 struct MapDrawControl;
+class MtEventManager;
 
 class ClientNotReadyException : public BaseException
 {
@@ -174,7 +176,9 @@ public:
 			MapDrawControl &control,
 			IWritableTextureSource *tsrc,
 			IWritableItemDefManager *itemdef,
-			IWritableNodeDefManager *nodedef
+			IWritableNodeDefManager *nodedef,
+			ISoundManager *sound,
+			MtEventManager *event
 	);
 	
 	~Client();
@@ -286,11 +290,11 @@ public:
 	std::wstring accessDeniedReason()
 	{ return m_access_denied_reason; }
 
-	float textureReceiveProgress()
-	{ return m_texture_receive_progress; }
+	float mediaReceiveProgress()
+	{ return m_media_receive_progress; }
 
 	bool texturesReceived()
-	{ return m_textures_received; }
+	{ return m_media_received; }
 	bool itemdefReceived()
 	{ return m_itemdef_received; }
 	bool nodedefReceived()
@@ -306,8 +310,13 @@ public:
 	virtual ICraftDefManager* getCraftDefManager();
 	virtual ITextureSource* getTextureSource();
 	virtual u16 allocateUnknownNodeId(const std::string &name);
+	virtual ISoundManager* getSoundManager();
+	virtual MtEventManager* getEventManager();
 
 private:
+	
+	// Insert a media file appropriately into the appropriate manager
+	bool loadMedia(const std::string &data, const std::string &filename);
 	
 	// Virtual methods from con::PeerHandler
 	void peerAdded(con::Peer *peer);
@@ -332,6 +341,9 @@ private:
 	IWritableTextureSource *m_tsrc;
 	IWritableItemDefManager *m_itemdef;
 	IWritableNodeDefManager *m_nodedef;
+	ISoundManager *m_sound;
+	MtEventManager *m_event;
+
 	MeshUpdateThread m_mesh_update_thread;
 	ClientEnvironment m_env;
 	con::Connection m_con;
@@ -358,8 +370,11 @@ private:
 	bool m_access_denied;
 	std::wstring m_access_denied_reason;
 	Queue<ClientEvent> m_client_event_queue;
-	float m_texture_receive_progress;
-	bool m_textures_received;
+	FileCache m_media_cache;
+	// Mapping from media file name to SHA1 checksum
+	core::map<std::string, std::string> m_media_name_sha1_map;
+	float m_media_receive_progress;
+	bool m_media_received;
 	bool m_itemdef_received;
 	bool m_nodedef_received;
 	friend class FarMesh;
@@ -368,6 +383,15 @@ private:
 	bool m_time_of_day_set;
 	float m_last_time_of_day_f;
 	float m_time_of_day_update_timer;
+
+	// Sounds
+	float m_removed_sounds_check_timer;
+	// Mapping from server sound ids to our sound ids
+	std::map<s32, int> m_sounds_server_to_client;
+	// And the other way!
+	std::map<int, s32> m_sounds_client_to_server;
+	// And relations to objects
+	std::map<int, u16> m_sounds_to_objects;
 };
 
 #endif // !SERVER

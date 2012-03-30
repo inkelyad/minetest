@@ -70,8 +70,8 @@ void set_default_settings(Settings *settings)
 	settings->setDefault("wanted_fps", "30");
 	settings->setDefault("fps_max", "60");
 	// A bit more than the server will send around the player, to make fog blend well
-	settings->setDefault("viewing_range_nodes_min", "35");
 	settings->setDefault("viewing_range_nodes_max", "160");
+	settings->setDefault("viewing_range_nodes_min", "35");
 	settings->setDefault("screenW", "800");
 	settings->setDefault("screenH", "600");
 	settings->setDefault("address", "");
@@ -81,7 +81,7 @@ void set_default_settings(Settings *settings)
 	settings->setDefault("fov", "72");
 	settings->setDefault("view_bobbing", "true");
 	settings->setDefault("new_style_water", "false");
-	settings->setDefault("new_style_leaves", "false");
+	settings->setDefault("new_style_leaves", "true");
 	settings->setDefault("smooth_lighting", "true");
 	settings->setDefault("enable_texture_atlas", "true");
 	settings->setDefault("texture_path", "");
@@ -94,14 +94,14 @@ void set_default_settings(Settings *settings)
 	settings->setDefault("enable_clouds", "true");
 	settings->setDefault("screenshot_path", ".");
 	settings->setDefault("view_bobbing_amount", "1.0");
-	settings->setDefault("enable_3d_clouds", "false");
+	settings->setDefault("enable_3d_clouds", "true");
 	settings->setDefault("opaque_water", "false");
 	settings->setDefault("console_color", "(0,0,0)");
 	settings->setDefault("console_alpha", "200");
 
 	// Server stuff
 	// "map-dir" doesn't exist by default.
-	settings->setDefault("default_game", "mesetint");
+	settings->setDefault("default_game", "minetest");
 	settings->setDefault("motd", "");
 	settings->setDefault("max_users", "100");
 	settings->setDefault("strict_protocol_version_checking", "true");
@@ -123,14 +123,13 @@ void set_default_settings(Settings *settings)
 	// This causes frametime jitter on client side, or does it?
 	settings->setDefault("max_simultaneous_block_sends_per_client", "4");
 	settings->setDefault("max_simultaneous_block_sends_server_total", "20");
-	settings->setDefault("max_block_send_distance", "10");
-	settings->setDefault("max_block_generate_distance", "6");
+	settings->setDefault("max_block_send_distance", "9");
+	settings->setDefault("max_block_generate_distance", "7");
 	settings->setDefault("time_send_interval", "5");
-	settings->setDefault("time_speed", "96");
+	settings->setDefault("time_speed", "72");
 	settings->setDefault("server_unload_unused_data_timeout", "29");
 	settings->setDefault("server_map_save_interval", "5.3");
 	settings->setDefault("full_block_send_enable_min_time_from_building", "2.0");
-	settings->setDefault("enable_experimental", "false");
 	settings->setDefault("dedicated_server_step", "0.05");
 }
 

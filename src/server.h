@@ -27,19 +27,20 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "porting.h"
 #include "map.h"
 #include "inventory.h"
-#include "auth.h"
 #include "ban.h"
 #include "gamedef.h"
 #include "serialization.h" // For SER_FMT_VER_INVALID
-#include "serverremoteplayer.h"
 #include "mods.h"
 #include "inventorymanager.h"
 #include "subgame.h"
+#include "sound.h"
 struct LuaState;
 typedef struct lua_State lua_State;
 class IWritableItemDefManager;
 class IWritableNodeDefManager;
 class IWritableCraftDefManager;
+class EventManager;
+class PlayerSAO;
 
 class ServerError : public std::exception
 {
@@ -251,26 +252,59 @@ struct PrioritySortedBlockTransfer
 	u16 peer_id;
 };
 
-struct TextureRequest
+struct MediaRequest
 {
 	std::string name;
 
-	TextureRequest(const std::string &name_=""):
+	MediaRequest(const std::string &name_=""):
 		name(name_)
 	{}
 };
 
-struct TextureInformation
+struct MediaInfo
 {
 	std::string path;
 	std::string sha1_digest;
 
-	TextureInformation(const std::string path_="",
+	MediaInfo(const std::string path_="",
 			const std::string sha1_digest_=""):
 		path(path_),
 		sha1_digest(sha1_digest_)
 	{
 	}
+};
+
+struct ServerSoundParams
+{
+	float gain;
+	std::string to_player;
+	enum Type{
+		SSP_LOCAL=0,
+		SSP_POSITIONAL=1,
+		SSP_OBJECT=2
+	} type;
+	v3f pos;
+	u16 object;
+	float max_hear_distance;
+	bool loop;
+
+	ServerSoundParams():
+		gain(1.0),
+		to_player(""),
+		type(SSP_LOCAL),
+		pos(0,0,0),
+		object(0),
+		max_hear_distance(32*BS),
+		loop(false)
+	{}
+	
+	v3f getPos(ServerEnvironment *env, bool *pos_exists) const;
+};
+
+struct ServerPlayingSound
+{
+	ServerSoundParams params;
+	std::set<u16> clients; // peer ids
 };
 
 class RemoteClient
@@ -460,18 +494,15 @@ public:
 		m_shutdown_requested = true;
 	}
 
-	// Envlock and conlock should be locked when calling this
-	void SendMovePlayer(Player *player);
+	// Returns -1 if failed, sound handle on success
+	// Envlock + conlock
+	s32 playSound(const SimpleSoundSpec &spec, const ServerSoundParams &params);
+	void stopSound(s32 handle);
 	
-	// Thread-safe
-	u64 getPlayerAuthPrivs(const std::string &name);
-	void setPlayerAuthPrivs(const std::string &name, u64 privs);
-	u64 getPlayerEffectivePrivs(const std::string &name);
+	// Envlock + conlock
+	std::set<std::string> getPlayerEffectivePrivs(const std::string &name);
+	bool checkPriv(const std::string &name, const std::string &priv);
 
-	// Changes a player's password, password must be given as plaintext
-	// If the player doesn't exist, a new entry is added to the auth manager
-	void setPlayerPassword(const std::string &name, const std::wstring &password);
-	
 	// Saves g_settings to configpath given at initialization
 	void saveConfig();
 
@@ -513,6 +544,8 @@ public:
 	virtual ICraftDefManager* getCraftDefManager();
 	virtual ITextureSource* getTextureSource();
 	virtual u16 allocateUnknownNodeId(const std::string &name);
+	virtual ISoundManager* getSoundManager();
+	virtual MtEventManager* getEventManager();
 	
 	IWritableItemDefManager* getWritableItemDefManager();
 	IWritableNodeDefManager* getWritableNodeDefManager();
@@ -521,6 +554,8 @@ public:
 	const ModSpec* getModSpec(const std::string &modname);
 	
 	std::string getWorldPath(){ return m_path_world; }
+
+	bool isSingleplayer(){ return m_simple_singleplayer_mode; }
 
 	void setAsyncFatalError(const std::string &error)
 	{
@@ -557,14 +592,11 @@ private:
 	*/
 
 	// Envlock and conlock should be locked when calling these
+	void SendMovePlayer(u16 peer_id);
 	void SendInventory(u16 peer_id);
-	// send wielded item info about player to all
-	void SendWieldedItem(const ServerRemotePlayer *srp);
-	// send wielded item info about all players to all players
-	void SendPlayerItems();
 	void SendChatMessage(u16 peer_id, const std::wstring &message);
 	void BroadcastChatMessage(const std::wstring &message);
-	void SendPlayerHP(Player *player);
+	void SendPlayerHP(u16 peer_id);
 	/*
 		Send a node removal/addition event to all clients except ignore_id.
 		Additionally, if far_players!=NULL, players further away than
@@ -583,18 +615,17 @@ private:
 	// Sends blocks to clients (locks env and con on its own)
 	void SendBlocks(float dtime);
 	
-	void PrepareTextures();
-
-	void SendTextureAnnouncement(u16 peer_id);
-
-	void SendTexturesRequested(u16 peer_id,core::list<TextureRequest> tosend);
+	void fillMediaCache();
+	void sendMediaAnnouncement(u16 peer_id);
+	void sendRequestedMedia(u16 peer_id,
+			const core::list<MediaRequest> &tosend);
 
 	/*
 		Something random
 	*/
 	
-	void DiePlayer(Player *player);
-	void RespawnPlayer(Player *player);
+	void DiePlayer(u16 peer_id);
+	void RespawnPlayer(u16 peer_id);
 	
 	void UpdateCrafting(u16 peer_id);
 	
@@ -610,6 +641,15 @@ private:
 		return player->getName();
 	}
 
+	// When called, environment mutex should be locked
+	PlayerSAO* getPlayerSAO(u16 peer_id)
+	{
+		Player *player = m_env->getPlayer(peer_id);
+		if(player == NULL)
+			return NULL;
+		return player->getPlayerSAO();
+	}
+
 	/*
 		Get a player from memory or creates one.
 		If player is already connected, return NULL
@@ -617,14 +657,12 @@ private:
 
 		Call with env and con locked.
 	*/
-	ServerRemotePlayer *emergePlayer(const char *name, u16 peer_id);
+	PlayerSAO *emergePlayer(const char *name, u16 peer_id);
 	
 	// Locks environment and connection by its own
 	struct PeerChange;
 	void handlePeerChange(PeerChange &c);
 	void handlePeerChanges();
-
-	u64 getPlayerPrivs(Player *player);
 
 	/*
 		Variables
@@ -664,9 +702,6 @@ private:
 	// Connected clients (behind the con mutex)
 	core::map<u16, RemoteClient*> m_clients;
 
-	// User authentication
-	AuthManager m_authmanager;
-
 	// Bann checking
 	BanManager m_banmanager;
 
@@ -682,6 +717,9 @@ private:
 	
 	// Craft definition manager
 	IWritableCraftDefManager *m_craftdef;
+	
+	// Event manager
+	EventManager *m_event;
 	
 	// Mods
 	core::list<ModSpec> m_mods;
@@ -759,6 +797,13 @@ private:
 	*/
 	bool m_ignore_map_edit_events;
 	/*
+		If a non-empty area, map edit events contained within are left
+		unsent. Done at map generation time to speed up editing of the
+		generated area, as it will be sent anyway.
+		This is behind m_env_mutex
+	*/
+	VoxelArea m_ignore_map_edit_events_area;
+	/*
 		If set to !=0, the incoming MapEditEvents are modified to have
 		this peed id as the disabled recipient
 		This is behind m_env_mutex
@@ -768,7 +813,13 @@ private:
 	friend class EmergeThread;
 	friend class RemoteClient;
 
-	std::map<std::string,TextureInformation> m_Textures;
+	std::map<std::string,MediaInfo> m_media;
+
+	/*
+		Sounds
+	*/
+	std::map<s32, ServerPlayingSound> m_playing_sounds;
+	s32 m_next_sound_id;
 };
 
 /*

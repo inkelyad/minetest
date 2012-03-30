@@ -30,8 +30,12 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "settings.h"
 #include "itemdef.h" // For wield visualization
 #include "noise.h" // easeCurve
+#include "gamedef.h"
+#include "sound.h"
+#include "event.h"
 
-Camera::Camera(scene::ISceneManager* smgr, MapDrawControl& draw_control):
+Camera::Camera(scene::ISceneManager* smgr, MapDrawControl& draw_control,
+		IGameDef *gamedef):
 	m_smgr(smgr),
 	m_playernode(NULL),
 	m_headnode(NULL),
@@ -42,6 +46,7 @@ Camera::Camera(scene::ISceneManager* smgr, MapDrawControl& draw_control):
 	m_wieldlight(0),
 
 	m_draw_control(draw_control),
+	m_gamedef(gamedef),
 
 	m_camera_position(0,0,0),
 	m_camera_direction(0,0,0),
@@ -168,18 +173,38 @@ void Camera::step(f32 dtime)
 		}
 		else
 		{
+			float was = m_view_bobbing_anim;
 			m_view_bobbing_anim = my_modf(m_view_bobbing_anim + offset);
+			bool step = (was == 0 ||
+					(was < 0.5f && m_view_bobbing_anim >= 0.5f) ||
+					(was > 0.5f && m_view_bobbing_anim <= 0.5f));
+			if(step){
+				MtEvent *e = new SimpleTriggerEvent("ViewBobbingStep");
+				m_gamedef->event()->put(e);
+			}
 		}
 	}
 
 	if (m_digging_button != -1)
 	{
 		f32 offset = dtime * 3.5;
+		float m_digging_anim_was = m_digging_anim;
 		m_digging_anim += offset;
 		if (m_digging_anim >= 1)
 		{
 			m_digging_anim = 0;
 			m_digging_button = -1;
+		}
+		float lim = 0.15;
+		if(m_digging_anim_was < lim && m_digging_anim >= lim)
+		{
+			if(m_digging_button == 0){
+				MtEvent *e = new SimpleTriggerEvent("CameraPunchLeft");
+				m_gamedef->event()->put(e);
+			} else if(m_digging_button == 1){
+				MtEvent *e = new SimpleTriggerEvent("CameraPunchRight");
+				m_gamedef->event()->put(e);
+			}
 		}
 	}
 }
@@ -265,6 +290,9 @@ void Camera::update(LocalPlayer* player, f32 frametime, v2u32 screensize,
 	// FOV and aspect ratio
 	m_aspect = (f32)screensize.X / (f32) screensize.Y;
 	m_fov_y = fov_degrees * PI / 180.0;
+	// Increase vertical FOV on lower aspect ratios (<16:10)
+	m_fov_y *= MYMAX(1.0, MYMIN(1.4, sqrt(16./10. / m_aspect)));
+	// WTF is this? It can't be right
 	m_fov_x = 2 * atan(0.5 * m_aspect * tan(m_fov_y));
 	m_cameranode->setAspectRatio(m_aspect);
 	m_cameranode->setFOV(m_fov_y);
@@ -481,9 +509,9 @@ void Camera::setDigging(s32 button)
 		m_digging_button = button;
 }
 
-void Camera::wield(const ItemStack &item, IGameDef *gamedef)
+void Camera::wield(const ItemStack &item)
 {
-	IItemDefManager *idef = gamedef->idef();
+	IItemDefManager *idef = m_gamedef->idef();
 	scene::IMesh *wield_mesh = item.getDefinition(idef).wield_mesh;
 	if(wield_mesh)
 	{

@@ -27,6 +27,8 @@ class IItemDefManager;
 class INodeDefManager;
 class ICraftDefManager;
 class ITextureSource;
+class ISoundManager;
+class MtEventManager;
 
 /*
 	An interface for fetching game-global definitions like tool and
@@ -49,11 +51,16 @@ public:
 	// Used for keeping track of names/ids of unknown nodes
 	virtual u16 allocateUnknownNodeId(const std::string &name)=0;
 
+	virtual ISoundManager* getSoundManager()=0;
+	virtual MtEventManager* getEventManager()=0;
+	
 	// Shorthands
 	IItemDefManager* idef(){return getItemDefManager();}
 	INodeDefManager* ndef(){return getNodeDefManager();}
 	ICraftDefManager* cdef(){return getCraftDefManager();}
 	ITextureSource* tsrc(){return getTextureSource();}
+	ISoundManager* sound(){return getSoundManager();}
+	MtEventManager* event(){return getEventManager();}
 };
 
 #endif

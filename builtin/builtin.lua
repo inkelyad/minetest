@@ -12,7 +12,7 @@
 print = minetest.debug
 
 --
---
+-- Define some random basic things
 --
 
 function basic_dump2(o)
@@ -88,6 +88,19 @@ function dump(o, dumped)
 		return nil
 	end
 end
+
+function string:split(sep)
+	local sep, fields = sep or ",", {}
+	local pattern = string.format("([^%s]+)", sep)
+	self:gsub(pattern, function(c) fields[#fields+1] = c end)
+	return fields
+end
+
+function string:trim()
+	return (self:gsub("^%s*(.-)%s*$", "%1"))
+end
+
+assert(string.trim("\n \t\tfoo\t ") == "foo")
 
 --
 -- Item definition helpers
@@ -794,6 +807,491 @@ minetest.registered_on_generateds, minetest.register_on_generated = make_registr
 minetest.registered_on_newplayers, minetest.register_on_newplayer = make_registration()
 minetest.registered_on_dieplayers, minetest.register_on_dieplayer = make_registration()
 minetest.registered_on_respawnplayers, minetest.register_on_respawnplayer = make_registration()
+minetest.registered_on_joinplayers, minetest.register_on_joinplayer = make_registration()
+minetest.registered_on_leaveplayers, minetest.register_on_leaveplayer = make_registration()
+
+--
+-- Misc. API functions
+--
+
+minetest.timers_to_add = {}
+minetest.timers = {}
+minetest.register_globalstep(function(dtime)
+	for _, timer in ipairs(minetest.timers_to_add) do
+		table.insert(minetest.timers, timer)
+	end
+	minetest.timers_to_add = {}
+	for index, timer in ipairs(minetest.timers) do
+		timer.time = timer.time - dtime
+		if timer.time <= 0 then
+			timer.func(timer.param)
+			table.remove(minetest.timers,index)
+		end
+	end
+end)
+
+function minetest.after(time, func, param)
+	table.insert(minetest.timers_to_add, {time=time, func=func, param=param})
+end
+
+function minetest.check_player_privs(name, privs)
+	local player_privs = minetest.get_player_privs(name)
+	local missing_privileges = {}
+	for priv, val in pairs(privs) do
+		if val then
+			if not player_privs[priv] then
+				table.insert(missing_privileges, priv)
+			end
+		end
+	end
+	if #missing_privileges > 0 then
+		return false, missing_privileges
+	end
+	return true, ""
+end
+
+function minetest.get_connected_players()
+	-- This could be optimized a bit, but leave that for later
+	local list = {}
+	for _, obj in pairs(minetest.env:get_objects_inside_radius({x=0,y=0,z=0}, 1000000)) do
+		if obj:get_player_name() then
+			table.insert(list, obj)
+		end
+	end
+	return list
+end
+
+minetest.registered_privileges = {}
+function minetest.register_privilege(name, description)
+	minetest.registered_privileges[name] = description
+end
+
+minetest.register_privilege("interact", "Can interact with things and modify the world")
+minetest.register_privilege("teleport", "Can use /teleport command")
+minetest.register_privilege("bring", "Can teleport other players")
+minetest.register_privilege("settime", "Can use /time")
+minetest.register_privilege("privs", "Can modify privileges")
+minetest.register_privilege("server", "Can do server maintenance stuff")
+minetest.register_privilege("shout", "Can speak in chat")
+minetest.register_privilege("ban", "Can ban and unban players")
+minetest.register_privilege("give", "Can use /give and /giveme")
+minetest.register_privilege("password", "Can use /setpassword and /clearpassword")
+
+--
+-- Chat commands
+--
+
+minetest.chatcommands = {}
+function minetest.register_chatcommand(cmd, def)
+	def = def or {}
+	def.params = def.params or ""
+	def.description = def.description or ""
+	def.privs = def.privs or {}
+	minetest.chatcommands[cmd] = def
+end
+
+-- Register the help command
+minetest.register_chatcommand("help", {
+	privs = {},
+	params = "(nothing)/all/privs/<cmd>",
+	description = "Get help for commands or list privileges",
+	func = function(name, param)
+		local format_help_line = function(cmd, def)
+			local msg = "/"..cmd
+			if def.params and def.params ~= "" then msg = msg .. " " .. def.params end
+			if def.description and def.description ~= "" then msg = msg .. ": " .. def.description end
+			return msg
+		end
+		if param == "" then
+			local msg = ""
+			cmds = {}
+			for cmd, def in pairs(minetest.chatcommands) do
+				if minetest.check_player_privs(name, def.privs) then
+					table.insert(cmds, cmd)
+				end
+			end
+			minetest.chat_send_player(name, "Available commands: "..table.concat(cmds, " "))
+			minetest.chat_send_player(name, "Use '/help <cmd>' to get more information, or '/help all' to list everything.")
+		elseif param == "all" then
+			minetest.chat_send_player(name, "Available commands:")
+			for cmd, def in pairs(minetest.chatcommands) do
+				if minetest.check_player_privs(name, def.privs) then
+					minetest.chat_send_player(name, format_help_line(cmd, def))
+				end
+			end
+		elseif param == "privs" then
+			minetest.chat_send_player(name, "Available privileges:")
+			for priv, desc in pairs(minetest.registered_privileges) do
+				minetest.chat_send_player(name, priv..": "..desc)
+			end
+		else
+			local cmd = param
+			def = minetest.chatcommands[cmd]
+			if not def then
+				minetest.chat_send_player(name, "Command not available: "..cmd)
+			else
+				minetest.chat_send_player(name, format_help_line(cmd, def))
+			end
+		end
+	end,
+})
+
+-- Register C++ commands without functions
+minetest.register_chatcommand("me", {params = nil, description = "chat action (eg. /me orders a pizza)"})
+minetest.register_chatcommand("status", {description = "print server status line"})
+minetest.register_chatcommand("shutdown", {params = "", description = "shutdown server", privs = {server=true}})
+minetest.register_chatcommand("setting", {params = "<name> = <value>", description = "set line in configuration file", privs = {server=true}})
+minetest.register_chatcommand("clearobjects", {params = "", description = "clear all objects in world", privs = {server=true}})
+minetest.register_chatcommand("time", {params = "<0...24000>", description = "set time of day", privs = {settime=true}})
+minetest.register_chatcommand("ban", {params = "<name>", description = "ban IP of player", privs = {ban=true}})
+minetest.register_chatcommand("unban", {params = "<name/ip>", description = "remove IP ban", privs = {ban=true}})
+
+-- Register some other commands
+minetest.register_chatcommand("privs", {
+	params = "<name>",
+	description = "print out privileges of player",
+	func = function(name, param)
+		if param == "" then
+			param = name
+		else
+			if not minetest.check_player_privs(name, {privs=true}) then
+				minetest.chat_send_player(name, "Privileges of "..param.." are hidden from you.")
+			end
+		end
+		privs = {}
+		for priv, _ in pairs(minetest.get_player_privs(param)) do
+			table.insert(privs, priv)
+		end
+		minetest.chat_send_player(name, "Privileges of "..param..": "..table.concat(privs, " "))
+	end,
+})
+minetest.register_chatcommand("grant", {
+	params = "<name> <privilege>",
+	description = "Give privilege to player",
+	privs = {privs=true},
+	func = function(name, param)
+		local grantname, grantprivstr = string.match(param, "([^ ]+) (.+)")
+		if not grantname or not grantprivstr then
+			minetest.chat_send_player(name, "Invalid parameters (see /help grant)")
+			return
+		end
+		local grantprivs = minetest.string_to_privs(grantprivstr)
+		local privs = minetest.get_player_privs(grantname)
+		for priv, _ in pairs(grantprivs) do
+			privs[priv] = true
+		end
+		minetest.set_player_privs(grantname, privs)
+	end,
+})
+minetest.register_chatcommand("revoke", {
+	params = "<name> <privilege>",
+	description = "Remove privilege from player",
+	privs = {privs=true},
+	func = function(name, param)
+		local revokename, revokeprivstr = string.match(param, "([^ ]+) (.+)")
+		if not revokename or not revokeprivstr then
+			minetest.chat_send_player(name, "Invalid parameters (see /help revoke)")
+			return
+		end
+		local revokeprivs = minetest.string_to_privs(revokeprivstr)
+		local privs = minetest.get_player_privs(revokename)
+		for priv, _ in pairs(revokeprivs) do
+			table.remove(privs, priv)
+		end
+		minetest.set_player_privs(revokename, privs)
+	end,
+})
+minetest.register_chatcommand("setpassword", {
+	params = "<name> <password>",
+	description = "set given password",
+	privs = {password=true},
+	func = function(name, param)
+		if param == "" then
+			minetest.chat_send_player(name, "Password field required")
+			return
+		end
+		minetest.set_player_password(name, param)
+		minetest.chat_send_player(name, "Password set")
+	end,
+})
+minetest.register_chatcommand("clearpassword", {
+	params = "<name>",
+	description = "set empty password",
+	privs = {password=true},
+	func = function(name, param)
+		minetest.set_player_password(name, '')
+		minetest.chat_send_player(name, "Password cleared")
+	end,
+})
+
+minetest.register_chatcommand("teleport", {
+	params = "<X>,<Y>,<Z> | <to_name> | <name> <X>,<Y>,<Z> | <name> <to_name>",
+	description = "teleport to given position",
+	privs = {teleport=true},
+	func = function(name, param)
+		-- Returns (pos, true) if found, otherwise (pos, false)
+		local function find_free_position_near(pos)
+			local tries = {
+				{x=1,y=0,z=0},
+				{x=-1,y=0,z=0},
+				{x=0,y=0,z=1},
+				{x=0,y=0,z=-1},
+			}
+			for _, d in ipairs(tries) do
+				local p = {x = pos.x+d.x, y = pos.y+d.y, z = pos.z+d.z}
+				local n = minetest.env:get_node(p)
+				if not minetest.registered_nodes[n.name].walkable then
+					return p, true
+				end
+			end
+			return pos, false
+		end
+
+		local teleportee = nil
+		local p = {}
+		p.x, p.y, p.z = string.match(param, "^([%d.-]+)[, ] *([%d.-]+)[, ] *([%d.-]+)$")
+		teleportee = minetest.env:get_player_by_name(name)
+		if teleportee and p.x and p.y and p.z then
+			minetest.chat_send_player(name, "Teleporting to ("..p.x..", "..p.y..", "..p.z..")")
+			teleportee:setpos(p)
+			return
+		end
+		
+		local teleportee = nil
+		local p = nil
+		local target_name = nil
+		target_name = string.match(param, "^([^ ]+)$")
+		teleportee = minetest.env:get_player_by_name(name)
+		if target_name then
+			local target = minetest.env:get_player_by_name(target_name)
+			if target then
+				p = target:getpos()
+			end
+		end
+		if teleportee and p then
+			p = find_free_position_near(p)
+			minetest.chat_send_player(name, "Teleporting to "..target_name.." at ("..p.x..", "..p.y..", "..p.z..")")
+			teleportee:setpos(p)
+			return
+		end
+		
+		if minetest.check_player_privs(name, {bring=true}) then
+			local teleportee = nil
+			local p = {}
+			local teleportee_name = nil
+			teleportee_name, p.x, p.y, p.z = string.match(param, "^([^ ]+) +([%d.-]+)[, ] *([%d.-]+)[, ] *([%d.-]+)$")
+			if teleportee_name then
+				teleportee = minetest.env:get_player_by_name(teleportee_name)
+			end
+			if teleportee and p.x and p.y and p.z then
+				minetest.chat_send_player(name, "Teleporting "..teleportee_name.." to ("..p.x..", "..p.y..", "..p.z..")")
+				teleportee:setpos(p)
+				return
+			end
+			
+			local teleportee = nil
+			local p = nil
+			local teleportee_name = nil
+			local target_name = nil
+			teleportee_name, target_name = string.match(param, "^([^ ]+) +([^ ]+)$")
+			if teleportee_name then
+				teleportee = minetest.env:get_player_by_name(teleportee_name)
+			end
+			if target_name then
+				local target = minetest.env:get_player_by_name(target_name)
+				if target then
+					p = target:getpos()
+				end
+			end
+			if teleportee and p then
+				p = find_free_position_near(p)
+				minetest.chat_send_player(name, "Teleporting "..teleportee_name.." to "..target_name.." at ("..p.x..", "..p.y..", "..p.z..")")
+				teleportee:setpos(p)
+				return
+			end
+		end
+
+		minetest.chat_send_player(name, "Invalid parameters (\""..param.."\") or player not found (see /help teleport)")
+		return
+	end,
+})
+
+--
+-- Builtin chat handler
+--
+
+minetest.register_on_chat_message(function(name, message)
+	local cmd, param = string.match(message, "/([^ ]+) *(.*)")
+	if not param then
+		param = ""
+	end
+	local cmd_def = minetest.chatcommands[cmd]
+	if cmd_def then
+		if not cmd_def.func then
+			-- This is a C++ command
+			return false
+		else
+			local has_privs, missing_privs = minetest.check_player_privs(name, cmd_def.privs)
+			if has_privs then
+				cmd_def.func(name, param)
+			else
+				minetest.chat_send_player(name, "You don't have permission to run this command (missing privileges: "..table.concat(missing_privs, ", ")..")")
+			end
+			return true -- handled chat message
+		end
+	end
+	return false
+end)
+
+--
+-- Authentication handler
+--
+
+function minetest.string_to_privs(str)
+	assert(type(str) == "string")
+	privs = {}
+	for _, priv in pairs(string.split(str, ',')) do
+		privs[priv:trim()] = true
+	end
+	return privs
+end
+
+function minetest.privs_to_string(privs)
+	assert(type(privs) == "table")
+	list = {}
+	for priv, bool in pairs(privs) do
+		if bool then
+			table.insert(list, priv)
+		end
+	end
+	return table.concat(list, ',')
+end
+
+assert(minetest.string_to_privs("a,b").b == true)
+assert(minetest.privs_to_string({a=true,b=true}) == "a,b")
+
+minetest.auth_file_path = minetest.get_worldpath().."/auth.txt"
+minetest.auth_table = {}
+
+local function read_auth_file()
+	local newtable = {}
+	local file, errmsg = io.open(minetest.auth_file_path, 'rb')
+	if not file then
+		error(minetest.auth_file_path.." could not be opened for reading: "..errmsg)
+	end
+	for line in file:lines() do
+		if line ~= "" then
+			local name, password, privilegestring = string.match(line, "([^:]*):([^:]*):([^:]*)")
+			if not name or not password or not privilegestring then
+				error("Invalid line in auth.txt: "..dump(line))
+			end
+			local privileges = minetest.string_to_privs(privilegestring)
+			newtable[name] = {password=password, privileges=privileges}
+		end
+	end
+	io.close(file)
+	minetest.auth_table = newtable
+end
+
+local function save_auth_file()
+	local newtable = {}
+	-- Check table for validness before attempting to save
+	for name, stuff in pairs(minetest.auth_table) do
+		assert(type(name) == "string")
+		assert(name ~= "")
+		assert(type(stuff) == "table")
+		assert(type(stuff.password) == "string")
+		assert(type(stuff.privileges) == "table")
+	end
+	local file, errmsg = io.open(minetest.auth_file_path, 'w+b')
+	if not file then
+		error(minetest.auth_file_path.." could not be opened for writing: "..errmsg)
+	end
+	for name, stuff in pairs(minetest.auth_table) do
+		local privstring = minetest.privs_to_string(stuff.privileges)
+		file:write(name..":"..stuff.password..":"..privstring..'\n')
+	end
+	io.close(file)
+end
+
+read_auth_file()
+
+minetest.builtin_auth_handler = {
+	get_auth = function(name)
+		assert(type(name) == "string")
+		if not minetest.auth_table[name] then
+			minetest.builtin_auth_handler.create_auth(name, minetest.get_password_hash(name, minetest.setting_get("default_password")))
+		end
+		if minetest.is_singleplayer() then
+			return {
+				password = "",
+				privileges = minetest.registered_privileges
+			}
+		else
+			if minetest.auth_table[name] and name == minetest.setting_get("name") then
+				return {
+					password = minetest.auth_table[name].password,
+					privileges = minetest.registered_privileges
+				}
+			else
+				return minetest.auth_table[name]
+			end
+		end
+	end,
+	create_auth = function(name, password)
+		assert(type(name) == "string")
+		assert(type(password) == "string")
+		minetest.log('info', "Built-in authentication handler adding player '"..name.."'")
+		minetest.auth_table[name] = {
+			password = password,
+			privileges = minetest.string_to_privs(minetest.setting_get("default_privs")),
+		}
+		save_auth_file()
+	end,
+	set_password = function(name, password)
+		assert(type(name) == "string")
+		assert(type(password) == "string")
+		if not minetest.auth_table[name] then
+			minetest.builtin_auth_handler.create_auth(name, password)
+		else
+			minetest.log('info', "Built-in authentication handler setting password of player '"..name.."'")
+			minetest.auth_table[name].password = password
+			save_auth_file()
+		end
+	end,
+	set_privileges = function(name, privileges)
+		assert(type(name) == "string")
+		assert(type(privileges) == "table")
+		if not minetest.auth_table[name] then
+			minetest.builtin_auth_handler.create_auth(name, minetest.get_password_hash(name, minetest.setting_get("default_password")))
+		end
+		minetest.auth_table[name].privileges = privileges
+		save_auth_file()
+	end
+}
+
+function minetest.register_authentication_handler(handler)
+	if minetest.registered_auth_handler then
+		error("Add-on authentication handler already registered by "..minetest.registered_auth_handler_modname)
+	end
+	minetest.registered_auth_handler = handler
+	minetest.registered_auth_handler_modname = minetest.get_current_modname()
+end
+
+function minetest.get_auth_handler()
+	if minetest.registered_auth_handler then
+		return minetest.registered_auth_handler
+	end
+	return minetest.builtin_auth_handler
+end
+
+function minetest.set_player_password(name, password)
+	minetest.get_auth_handler().set_password(name, password)
+end
+
+function minetest.set_player_privs(name, privs)
+	minetest.get_auth_handler().set_privileges(name, privs)
+end
 
 --
 -- Set random seed

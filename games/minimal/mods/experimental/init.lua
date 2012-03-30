@@ -6,6 +6,36 @@
 
 experimental = {}
 
+experimental.player_visual_index = 0
+function switch_player_visual()
+	for _, obj in pairs(minetest.get_connected_players()) do
+		if experimental.player_visual_index == 0 then
+			obj:set_properties({visual="upright_sprite"})
+		else
+			obj:set_properties({visual="cube"})
+		end
+	end
+	experimental.player_visual_index = (experimental.player_visual_index + 1) % 2
+	minetest.after(1.0, switch_player_visual)
+end
+minetest.after(1.0, switch_player_visual)
+
+--[[
+stepsound = -1
+function test_sound()
+	print("test_sound")
+	stepsound = minetest.sound_play("default_grass_footstep", {gain=1.0})
+	minetest.after(2.0, test_sound)
+	--minetest.after(0.1, test_sound_stop)
+end
+function test_sound_stop()
+	print("test_sound_stop")
+	minetest.sound_stop(stepsound)
+	minetest.after(2.0, test_sound)
+end
+test_sound()
+--]]
+
 function on_step(dtime)
 	-- print("experimental on_step")
 	--[[

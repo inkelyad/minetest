@@ -324,6 +324,16 @@ void ClientMap::renderMap(video::IVideoDriver* driver, s32 pass)
 				Occlusion culling
 			*/
 
+			// No occlusion culling when free_move is on and camera is
+			// inside ground
+			bool occlusion_culling_enabled = true;
+			if(g_settings->getBool("free_move")){
+				MapNode n = getNodeNoEx(cam_pos_nodes);
+				if(n.getContent() == CONTENT_IGNORE ||
+						nodemgr->get(n).solidness == 2)
+					occlusion_culling_enabled = false;
+			}
+
 			v3s16 cpn = block->getPos() * MAP_BLOCKSIZE;
 			cpn += v3s16(MAP_BLOCKSIZE/2, MAP_BLOCKSIZE/2, MAP_BLOCKSIZE/2);
 			float step = BS*1;
@@ -334,6 +344,7 @@ void ClientMap::renderMap(video::IVideoDriver* driver, s32 pass)
 			s16 bs2 = MAP_BLOCKSIZE/2 + 1;
 			u32 needed_count = 1;
 			if(
+				occlusion_culling_enabled &&
 				isOccluded(this, spn, cpn + v3s16(0,0,0),
 					step, stepfac, startoff, endoff, needed_count, nodemgr) &&
 				isOccluded(this, spn, cpn + v3s16(bs2,bs2,bs2),
@@ -598,9 +609,9 @@ int ClientMap::getBackgroundBrightness(float max_d, u32 daylight_factor,
 	if(z_directions[0].X < -99){
 		for(u32 i=0; i<sizeof(z_directions)/sizeof(*z_directions); i++){
 			z_directions[i] = v3f(
-				0.01 * myrand_range(-80, 80),
+				0.01 * myrand_range(-100, 100),
 				1.0,
-				0.01 * myrand_range(-80, 80)
+				0.01 * myrand_range(-100, 100)
 			);
 			z_offsets[i] = 0.01 * myrand_range(0,100);
 		}

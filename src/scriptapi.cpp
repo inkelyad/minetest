@@ -33,9 +33,8 @@ extern "C" {
 #include "filesys.h"
 #include "serverobject.h"
 #include "script.h"
-//#include "luna.h"
-#include "luaentity_common.h"
-#include "content_sao.h" // For LuaEntitySAO
+#include "object_properties.h"
+#include "content_sao.h" // For LuaEntitySAO and PlayerSAO
 #include "itemdef.h"
 #include "nodedef.h"
 #include "craftdef.h"
@@ -47,6 +46,7 @@ extern "C" {
 #include "utility.h"
 #include "tool.h"
 #include "daynightratio.h"
+#include "noise.h" // PseudoRandom for LuaPseudoRandom
 
 static void stackDump(lua_State *L, std::ostream &o)
 {
@@ -141,14 +141,14 @@ static Server* get_server(lua_State *L)
 	return server;
 }
 
-static ServerEnvironment* get_env(lua_State *L)
+/*static ServerEnvironment* get_env(lua_State *L)
 {
 	// Get environment from registry
 	lua_getfield(L, LUA_REGISTRYINDEX, "minetest_env");
 	ServerEnvironment *env = (ServerEnvironment*)lua_touserdata(L, -1);
 	lua_pop(L, 1);
 	return env;
-}
+}*/
 
 static void objectref_get(lua_State *L, u16 id)
 {
@@ -648,6 +648,27 @@ static void read_groups(lua_State *L, int index,
 }
 
 /*
+	Privileges
+*/
+static void read_privileges(lua_State *L, int index,
+		std::set<std::string> &result)
+{
+	result.clear();
+	lua_pushnil(L);
+	if(index < 0)
+		index -= 1;
+	while(lua_next(L, index) != 0){
+		// key at index -2 and value at index -1
+		std::string key = luaL_checkstring(L, -2);
+		bool value = lua_toboolean(L, -1);
+		if(value)
+			result.insert(key);
+		// removes value, keeps key for next iteration
+		lua_pop(L, 1);
+	}
+}
+
+/*
 	ToolCapabilities
 */
 
@@ -669,8 +690,19 @@ static ToolCapabilities read_tool_capabilities(
 				// This will be created
 				ToolGroupCap groupcap;
 				// Read simple parameters
-				getfloatfield(L, table_groupcap, "maxwear", groupcap.maxwear);
 				getintfield(L, table_groupcap, "maxlevel", groupcap.maxlevel);
+				getintfield(L, table_groupcap, "uses", groupcap.uses);
+				// DEPRECATED: maxwear
+				float maxwear = 0;
+				if(getfloatfield(L, table_groupcap, "maxwear", maxwear)){
+					if(maxwear != 0)
+						groupcap.uses = 1.0/maxwear;
+					else
+						groupcap.uses = 0;
+					infostream<<script_get_backtrace(L)<<std::endl;
+					infostream<<"WARNING: field \"maxwear\" is deprecated; "
+							<<"should replace with uses=1/maxwear"<<std::endl;
+				}
 				// Read "times" table
 				lua_getfield(L, table_groupcap, "times");
 				if(lua_istable(L, -1)){
@@ -724,8 +756,8 @@ static void set_tool_capabilities(lua_State *L, int table,
 		// Set subtable "times"
 		lua_setfield(L, -2, "times");
 		// Set simple parameters
-		setfloatfield(L, -1, "maxwear", groupcap.maxwear);
 		setintfield(L, -1, "maxlevel", groupcap.maxlevel);
+		setintfield(L, -1, "uses", groupcap.uses);
 		// Insert groupcap table into groupcaps table
 		lua_setfield(L, -2, name.c_str());
 	}
@@ -805,6 +837,84 @@ static void push_pointed_thing(lua_State *L, const PointedThing& pointed)
 		lua_pushstring(L, "nothing");
 		lua_setfield(L, -2, "type");
 	}
+}
+
+/*
+	SimpleSoundSpec
+*/
+
+static void read_soundspec(lua_State *L, int index, SimpleSoundSpec &spec)
+{
+	if(index < 0)
+		index = lua_gettop(L) + 1 + index;
+	if(lua_isnil(L, index)){
+	} else if(lua_istable(L, index)){
+		getstringfield(L, index, "name", spec.name);
+		getfloatfield(L, index, "gain", spec.gain);
+	} else if(lua_isstring(L, index)){
+		spec.name = lua_tostring(L, index);
+	}
+}
+
+/*
+	ObjectProperties
+*/
+
+static void read_object_properties(lua_State *L, int index,
+		ObjectProperties *prop)
+{
+	if(index < 0)
+		index = lua_gettop(L) + 1 + index;
+	if(!lua_istable(L, index))
+		return;
+
+	prop->hp_max = getintfield_default(L, -1, "hp_max", 10);
+
+	getboolfield(L, -1, "physical", prop->physical);
+
+	getfloatfield(L, -1, "weight", prop->weight);
+
+	lua_getfield(L, -1, "collisionbox");
+	if(lua_istable(L, -1))
+		prop->collisionbox = read_aabbox3df32(L, -1, 1.0);
+	lua_pop(L, 1);
+
+	getstringfield(L, -1, "visual", prop->visual);
+	
+	lua_getfield(L, -1, "visual_size");
+	if(lua_istable(L, -1))
+		prop->visual_size = read_v2f(L, -1);
+	lua_pop(L, 1);
+
+	lua_getfield(L, -1, "textures");
+	if(lua_istable(L, -1)){
+		prop->textures.clear();
+		int table = lua_gettop(L);
+		lua_pushnil(L);
+		while(lua_next(L, table) != 0){
+			// key at index -2 and value at index -1
+			if(lua_isstring(L, -1))
+				prop->textures.push_back(lua_tostring(L, -1));
+			else
+				prop->textures.push_back("");
+			// removes value, keeps key for next iteration
+			lua_pop(L, 1);
+		}
+	}
+	lua_pop(L, 1);
+	
+	lua_getfield(L, -1, "spritediv");
+	if(lua_istable(L, -1))
+		prop->spritediv = read_v2s16(L, -1);
+	lua_pop(L, 1);
+
+	lua_getfield(L, -1, "initial_sprite_basepos");
+	if(lua_istable(L, -1))
+		prop->initial_sprite_basepos = read_v2s16(L, -1);
+	lua_pop(L, 1);
+	
+	getboolfield(L, -1, "is_visible", prop->is_visible);
+	getboolfield(L, -1, "makes_footstep_sound", prop->makes_footstep_sound);
 }
 
 /*
@@ -1038,6 +1148,21 @@ static ContentFeatures read_content_features(lua_State *L, int index)
 	getboolfield(L, index, "legacy_facedir_simple", f.legacy_facedir_simple);
 	// Set to true if wall_mounted used to be set to true
 	getboolfield(L, index, "legacy_wallmounted", f.legacy_wallmounted);
+	
+	// Sound table
+	lua_getfield(L, index, "sounds");
+	if(lua_istable(L, -1)){
+		lua_getfield(L, -1, "footstep");
+		read_soundspec(L, -1, f.sound_footstep);
+		lua_pop(L, 1);
+		lua_getfield(L, -1, "dig");
+		read_soundspec(L, -1, f.sound_dig);
+		lua_pop(L, 1);
+		lua_getfield(L, -1, "dug");
+		read_soundspec(L, -1, f.sound_dug);
+		lua_pop(L, 1);
+	}
+	lua_pop(L, 1);
 
 	return f;
 }
@@ -1051,7 +1176,6 @@ static ItemStack read_item(lua_State *L, int index);
 static void inventory_set_list_from_lua(Inventory *inv, const char *name,
 		lua_State *L, int tableindex, int forcesize=-1)
 {
-	dstream<<"inventory_set_list_from_lua\n";
 	if(tableindex < 0)
 		tableindex = lua_gettop(L) + 1 + tableindex;
 	// If nil, delete list
@@ -1083,7 +1207,6 @@ static void inventory_set_list_from_lua(Inventory *inv, const char *name,
 		invlist->deleteItem(index);
 		index++;
 	}
-	dstream<<"inventory_set_list_from_lua done\n";
 }
 
 static void inventory_get_list_to_lua(Inventory *inv, const char *name,
@@ -2190,7 +2313,7 @@ private:
 
 	static const char className[];
 	static const luaL_reg methods[];
-
+public:
 	static ObjectRef *checkobject(lua_State *L, int narg)
 	{
 		luaL_checktype(L, narg, LUA_TUSERDATA);
@@ -2204,7 +2327,7 @@ private:
 		ServerActiveObject *co = ref->m_object;
 		return co;
 	}
-	
+private:
 	static LuaEntitySAO* getluaobject(ObjectRef *ref)
 	{
 		ServerActiveObject *obj = getobject(ref);
@@ -2215,14 +2338,22 @@ private:
 		return (LuaEntitySAO*)obj;
 	}
 	
-	static ServerRemotePlayer* getplayer(ObjectRef *ref)
+	static PlayerSAO* getplayersao(ObjectRef *ref)
 	{
 		ServerActiveObject *obj = getobject(ref);
 		if(obj == NULL)
 			return NULL;
 		if(obj->getType() != ACTIVEOBJECT_TYPE_PLAYER)
 			return NULL;
-		return static_cast<ServerRemotePlayer*>(obj);
+		return (PlayerSAO*)obj;
+	}
+	
+	static Player* getplayer(ObjectRef *ref)
+	{
+		PlayerSAO *playersao = getplayersao(ref);
+		if(playersao == NULL)
+			return NULL;
+		return playersao->getPlayer();
 	}
 	
 	// Exported functions
@@ -2275,10 +2406,6 @@ private:
 		v3f pos = checkFloatPos(L, 2);
 		// Do it
 		co->setPos(pos);
-		// Move player if applicable
-		ServerRemotePlayer *player = getplayer(ref);
-		if(player != NULL)
-			get_server(L)->SendMovePlayer(player);
 		return 0;
 	}
 	
@@ -2426,6 +2553,33 @@ private:
 		return 1;
 	}
 
+	// set_armor_groups(self, groups)
+	static int l_set_armor_groups(lua_State *L)
+	{
+		ObjectRef *ref = checkobject(L, 1);
+		ServerActiveObject *co = getobject(ref);
+		if(co == NULL) return 0;
+		// Do it
+		ItemGroupList groups;
+		read_groups(L, 2, groups);
+		co->setArmorGroups(groups);
+		return 0;
+	}
+
+	// set_properties(self, properties)
+	static int l_set_properties(lua_State *L)
+	{
+		ObjectRef *ref = checkobject(L, 1);
+		ServerActiveObject *co = getobject(ref);
+		if(co == NULL) return 0;
+		ObjectProperties *prop = co->accessObjectProperties();
+		if(!prop)
+			return 0;
+		read_object_properties(L, 2, prop);
+		co->notifyObjectPropertiesModified();
+		return 0;
+	}
+
 	/* LuaEntitySAO-only */
 
 	// setvelocity(self, {x=num, y=num, z=num})
@@ -2434,7 +2588,6 @@ private:
 		ObjectRef *ref = checkobject(L, 1);
 		LuaEntitySAO *co = getluaobject(ref);
 		if(co == NULL) return 0;
-		// pos
 		v3f pos = checkFloatPos(L, 2);
 		// Do it
 		co->setVelocity(pos);
@@ -2484,7 +2637,6 @@ private:
 		ObjectRef *ref = checkobject(L, 1);
 		LuaEntitySAO *co = getluaobject(ref);
 		if(co == NULL) return 0;
-		// pos
 		float yaw = luaL_checknumber(L, 2) * core::RADTODEG;
 		// Do it
 		co->setYaw(yaw);
@@ -2539,19 +2691,6 @@ private:
 		return 0;
 	}
 
-	// set_armor_groups(self, groups)
-	static int l_set_armor_groups(lua_State *L)
-	{
-		ObjectRef *ref = checkobject(L, 1);
-		LuaEntitySAO *co = getluaobject(ref);
-		if(co == NULL) return 0;
-		// Do it
-		ItemGroupList groups;
-		read_groups(L, 2, groups);
-		co->setArmorGroups(groups);
-		return 0;
-	}
-
 	// DEPRECATED
 	// get_entity_name(self)
 	static int l_get_entity_name(lua_State *L)
@@ -2582,7 +2721,7 @@ private:
 	static int l_get_player_name(lua_State *L)
 	{
 		ObjectRef *ref = checkobject(L, 1);
-		ServerRemotePlayer *player = getplayer(ref);
+		Player *player = getplayer(ref);
 		if(player == NULL){
 			lua_pushnil(L);
 			return 1;
@@ -2596,7 +2735,7 @@ private:
 	static int l_get_look_dir(lua_State *L)
 	{
 		ObjectRef *ref = checkobject(L, 1);
-		ServerRemotePlayer *player = getplayer(ref);
+		Player *player = getplayer(ref);
 		if(player == NULL) return 0;
 		// Do it
 		float pitch = player->getRadPitch();
@@ -2610,7 +2749,7 @@ private:
 	static int l_get_look_pitch(lua_State *L)
 	{
 		ObjectRef *ref = checkobject(L, 1);
-		ServerRemotePlayer *player = getplayer(ref);
+		Player *player = getplayer(ref);
 		if(player == NULL) return 0;
 		// Do it
 		lua_pushnumber(L, player->getRadPitch());
@@ -2621,7 +2760,7 @@ private:
 	static int l_get_look_yaw(lua_State *L)
 	{
 		ObjectRef *ref = checkobject(L, 1);
-		ServerRemotePlayer *player = getplayer(ref);
+		Player *player = getplayer(ref);
 		if(player == NULL) return 0;
 		// Do it
 		lua_pushnumber(L, player->getRadYaw());
@@ -2705,6 +2844,8 @@ const luaL_reg ObjectRef::methods[] = {
 	method(ObjectRef, get_wield_index),
 	method(ObjectRef, get_wielded_item),
 	method(ObjectRef, set_wielded_item),
+	method(ObjectRef, set_armor_groups),
+	method(ObjectRef, set_properties),
 	// LuaEntitySAO-only
 	method(ObjectRef, setvelocity),
 	method(ObjectRef, getvelocity),
@@ -2714,7 +2855,6 @@ const luaL_reg ObjectRef::methods[] = {
 	method(ObjectRef, getyaw),
 	method(ObjectRef, settexturemod),
 	method(ObjectRef, setsprite),
-	method(ObjectRef, set_armor_groups),
 	method(ObjectRef, get_entity_name),
 	method(ObjectRef, get_luaentity),
 	// Player-only
@@ -2758,11 +2898,11 @@ private:
 	
 	// Exported functions
 
-	// EnvRef:add_node(pos, node)
+	// EnvRef:set_node(pos, node)
 	// pos = {x=num, y=num, z=num}
-	static int l_add_node(lua_State *L)
+	static int l_set_node(lua_State *L)
 	{
-		//infostream<<"EnvRef::l_add_node()"<<std::endl;
+		//infostream<<"EnvRef::l_set_node()"<<std::endl;
 		EnvRef *o = checkobject(L, 1);
 		ServerEnvironment *env = o->m_env;
 		if(env == NULL) return 0;
@@ -2774,6 +2914,11 @@ private:
 		bool succeeded = env->getMap().addNodeWithEvent(pos, n);
 		lua_pushboolean(L, succeeded);
 		return 1;
+	}
+
+	static int l_add_node(lua_State *L)
+	{
+		return l_set_node(L);
 	}
 
 	// EnvRef:remove_node(pos)
@@ -2947,14 +3092,18 @@ private:
 		if(env == NULL) return 0;
 		// Do it
 		const char *name = luaL_checkstring(L, 2);
-		ServerRemotePlayer *player =
-				static_cast<ServerRemotePlayer*>(env->getPlayer(name));
+		Player *player = env->getPlayer(name);
 		if(player == NULL){
 			lua_pushnil(L);
 			return 1;
 		}
+		PlayerSAO *sao = player->getPlayerSAO();
+		if(sao == NULL){
+			lua_pushnil(L);
+			return 1;
+		}
 		// Put player on stack
-		objectref_get_or_create(L, player);
+		objectref_get_or_create(L, sao);
 		return 1;
 	}
 
@@ -3100,6 +3249,7 @@ public:
 };
 const char EnvRef::className[] = "EnvRef";
 const luaL_reg EnvRef::methods[] = {
+	method(EnvRef, set_node),
 	method(EnvRef, add_node),
 	method(EnvRef, remove_node),
 	method(EnvRef, get_node),
@@ -3119,7 +3269,122 @@ const luaL_reg EnvRef::methods[] = {
 };
 
 /*
-	Global functions
+	LuaPseudoRandom
+*/
+
+class LuaPseudoRandom
+{
+private:
+	PseudoRandom m_pseudo;
+
+	static const char className[];
+	static const luaL_reg methods[];
+
+	// Exported functions
+	
+	// garbage collector
+	static int gc_object(lua_State *L)
+	{
+		LuaPseudoRandom *o = *(LuaPseudoRandom **)(lua_touserdata(L, 1));
+		delete o;
+		return 0;
+	}
+
+	// next(self, min=0, max=32767) -> get next value
+	static int l_next(lua_State *L)
+	{
+		LuaPseudoRandom *o = checkobject(L, 1);
+		int min = 0;
+		int max = 32767;
+		lua_settop(L, 3); // Fill 2 and 3 with nil if they don't exist
+		if(!lua_isnil(L, 2))
+			min = luaL_checkinteger(L, 2);
+		if(!lua_isnil(L, 3))
+			max = luaL_checkinteger(L, 3);
+		if(max - min != 32767 && max - min > 32767/5)
+			throw LuaError(L, "PseudoRandom.next() max-min is not 32767 and is > 32768/5. This is disallowed due to the bad random distribution the implementation would otherwise make.");
+		PseudoRandom &pseudo = o->m_pseudo;
+		int val = pseudo.next();
+		val = (val % (max-min+1)) + min;
+		lua_pushinteger(L, val);
+		return 1;
+	}
+
+public:
+	LuaPseudoRandom(int seed):
+		m_pseudo(seed)
+	{
+	}
+
+	~LuaPseudoRandom()
+	{
+	}
+
+	const PseudoRandom& getItem() const
+	{
+		return m_pseudo;
+	}
+	PseudoRandom& getItem()
+	{
+		return m_pseudo;
+	}
+	
+	// LuaPseudoRandom(seed)
+	// Creates an LuaPseudoRandom and leaves it on top of stack
+	static int create_object(lua_State *L)
+	{
+		int seed = luaL_checknumber(L, 1);
+		LuaPseudoRandom *o = new LuaPseudoRandom(seed);
+		*(void **)(lua_newuserdata(L, sizeof(void *))) = o;
+		luaL_getmetatable(L, className);
+		lua_setmetatable(L, -2);
+		return 1;
+	}
+
+	static LuaPseudoRandom* checkobject(lua_State *L, int narg)
+	{
+		luaL_checktype(L, narg, LUA_TUSERDATA);
+		void *ud = luaL_checkudata(L, narg, className);
+		if(!ud) luaL_typerror(L, narg, className);
+		return *(LuaPseudoRandom**)ud;  // unbox pointer
+	}
+
+	static void Register(lua_State *L)
+	{
+		lua_newtable(L);
+		int methodtable = lua_gettop(L);
+		luaL_newmetatable(L, className);
+		int metatable = lua_gettop(L);
+
+		lua_pushliteral(L, "__metatable");
+		lua_pushvalue(L, methodtable);
+		lua_settable(L, metatable);  // hide metatable from Lua getmetatable()
+
+		lua_pushliteral(L, "__index");
+		lua_pushvalue(L, methodtable);
+		lua_settable(L, metatable);
+
+		lua_pushliteral(L, "__gc");
+		lua_pushcfunction(L, gc_object);
+		lua_settable(L, metatable);
+
+		lua_pop(L, 1);  // drop metatable
+
+		luaL_openlib(L, 0, methods, 0);  // fill methodtable
+		lua_pop(L, 1);  // drop methodtable
+
+		// Can be created from Lua (LuaPseudoRandom(seed))
+		lua_register(L, className, create_object);
+	}
+};
+const char LuaPseudoRandom::className[] = "PseudoRandom";
+const luaL_reg LuaPseudoRandom::methods[] = {
+	method(LuaPseudoRandom, next),
+	{0,0}
+};
+
+/*
+	LuaABM
 */
 
 class LuaABM : public ActiveBlockModifier
@@ -3194,6 +3459,47 @@ public:
 			script_error(L, "error: %s", lua_tostring(L, -1));
 	}
 };
+
+/*
+	ServerSoundParams
+*/
+
+static void read_server_sound_params(lua_State *L, int index,
+		ServerSoundParams &params)
+{
+	if(index < 0)
+		index = lua_gettop(L) + 1 + index;
+	// Clear
+	params = ServerSoundParams();
+	if(lua_istable(L, index)){
+		getfloatfield(L, index, "gain", params.gain);
+		getstringfield(L, index, "to_player", params.to_player);
+		lua_getfield(L, index, "pos");
+		if(!lua_isnil(L, -1)){
+			v3f p = read_v3f(L, -1)*BS;
+			params.pos = p;
+			params.type = ServerSoundParams::SSP_POSITIONAL;
+		}
+		lua_pop(L, 1);
+		lua_getfield(L, index, "object");
+		if(!lua_isnil(L, -1)){
+			ObjectRef *ref = ObjectRef::checkobject(L, -1);
+			ServerActiveObject *sao = ObjectRef::getobject(ref);
+			if(sao){
+				params.object = sao->getId();
+				params.type = ServerSoundParams::SSP_OBJECT;
+			}
+		}
+		lua_pop(L, 1);
+		params.max_hear_distance = BS*getfloatfield_default(L, index,
+				"max_hear_distance", params.max_hear_distance/BS);
+		getboolfield(L, index, "loop", params.loop);
+	}
+}
+
+/*
+	Global functions
+*/
 
 // debug(text)
 // Writes a line to dstream
@@ -3568,8 +3874,7 @@ static int l_get_player_privs(lua_State *L)
 	// Do it
 	lua_newtable(L);
 	int table = lua_gettop(L);
-	u64 privs_i = server->getPlayerEffectivePrivs(name);
-	std::set<std::string> privs_s = privsToSet(privs_i);
+	std::set<std::string> privs_s = server->getPlayerEffectivePrivs(name);
 	for(std::set<std::string>::const_iterator
 			i = privs_s.begin(); i != privs_s.end(); i++){
 		lua_pushboolean(L, true);
@@ -3658,6 +3963,44 @@ static int l_get_worldpath(lua_State *L)
 	return 1;
 }
 
+// sound_play(spec, parameters)
+static int l_sound_play(lua_State *L)
+{
+	SimpleSoundSpec spec;
+	read_soundspec(L, 1, spec);
+	ServerSoundParams params;
+	read_server_sound_params(L, 2, params);
+	s32 handle = get_server(L)->playSound(spec, params);
+	lua_pushinteger(L, handle);
+	return 1;
+}
+
+// sound_stop(handle)
+static int l_sound_stop(lua_State *L)
+{
+	int handle = luaL_checkinteger(L, 1);
+	get_server(L)->stopSound(handle);
+	return 0;
+}
+
+// is_singleplayer()
+static int l_is_singleplayer(lua_State *L)
+{
+	lua_pushboolean(L, get_server(L)->isSingleplayer());
+	return 1;
+}
+
+// get_password_hash(name, raw_password)
+static int l_get_password_hash(lua_State *L)
+{
+	std::string name = luaL_checkstring(L, 1);
+	std::string raw_password = luaL_checkstring(L, 2);
+	std::string hash = translatePassword(name,
+			narrow_to_wide(raw_password));
+	lua_pushstring(L, hash.c_str());
+	return 1;
+}
+
 static const struct luaL_Reg minetest_f [] = {
 	{"debug", l_debug},
 	{"log", l_log},
@@ -3675,6 +4018,10 @@ static const struct luaL_Reg minetest_f [] = {
 	{"get_current_modname", l_get_current_modname},
 	{"get_modpath", l_get_modpath},
 	{"get_worldpath", l_get_worldpath},
+	{"sound_play", l_sound_play},
+	{"sound_stop", l_sound_stop},
+	{"is_singleplayer", l_is_singleplayer},
+	{"get_password_hash", l_get_password_hash},
 	{NULL, NULL}
 };
 
@@ -3714,6 +4061,7 @@ void scriptapi_export(lua_State *L, Server *server)
 	NodeMetaRef::Register(L);
 	ObjectRef::Register(L);
 	EnvRef::Register(L);
+	LuaPseudoRandom::Register(L);
 }
 
 bool scriptapi_loadmod(lua_State *L, const std::string &scriptpath,
@@ -3900,6 +4248,135 @@ void scriptapi_rm_object_reference(lua_State *L, ServerActiveObject *cobj)
 	lua_settable(L, objectstable);
 }
 
+/*
+	misc
+*/
+
+// What scriptapi_run_callbacks does with the return values of callbacks.
+// Regardless of the mode, if only one callback is defined,
+// its return value is the total return value.
+// Modes only affect the case where 0 or >= 2 callbacks are defined.
+enum RunCallbacksMode
+{
+	// Returns the return value of the first callback
+	// Returns nil if list of callbacks is empty
+	RUN_CALLBACKS_MODE_FIRST,
+	// Returns the return value of the last callback
+	// Returns nil if list of callbacks is empty
+	RUN_CALLBACKS_MODE_LAST,
+	// If any callback returns a false value, the first such is returned
+	// Otherwise, the first callback's return value (trueish) is returned
+	// Returns true if list of callbacks is empty
+	RUN_CALLBACKS_MODE_AND,
+	// Like above, but stops calling callbacks (short circuit)
+	// after seeing the first false value
+	RUN_CALLBACKS_MODE_AND_SC,
+	// If any callback returns a true value, the first such is returned
+	// Otherwise, the first callback's return value (falseish) is returned
+	// Returns false if list of callbacks is empty
+	RUN_CALLBACKS_MODE_OR,
+	// Like above, but stops calling callbacks (short circuit)
+	// after seeing the first true value
+	RUN_CALLBACKS_MODE_OR_SC,
+	// Note: "a true value" and "a false value" refer to values that
+	// are converted by lua_toboolean to true or false, respectively.
+};
+
+// Push the list of callbacks (a lua table).
+// Then push nargs arguments.
+// Then call this function, which
+// - runs the callbacks
+// - removes the table and arguments from the lua stack
+// - pushes the return value, computed depending on mode
+static void scriptapi_run_callbacks(lua_State *L, int nargs,
+		RunCallbacksMode mode)
+{
+	// Insert the return value into the lua stack, below the table
+	assert(lua_gettop(L) >= nargs + 1);
+	lua_pushnil(L);
+	lua_insert(L, -(nargs + 1) - 1);
+	// Stack now looks like this:
+	// ... <return value = nil> <table> <arg#1> <arg#2> ... <arg#n>
+
+	int rv = lua_gettop(L) - nargs - 1;
+	int table = rv + 1;
+	int arg = table + 1;
+
+	luaL_checktype(L, table, LUA_TTABLE);
+
+	// Foreach
+	lua_pushnil(L);
+	bool first_loop = true;
+	while(lua_next(L, table) != 0){
+		// key at index -2 and value at index -1
+		luaL_checktype(L, -1, LUA_TFUNCTION);
+		// Call function
+		for(int i = 0; i < nargs; i++)
+			lua_pushvalue(L, arg+i);
+		if(lua_pcall(L, nargs, 1, 0))
+			script_error(L, "error: %s", lua_tostring(L, -1));
+
+		// Move return value to designated space in stack
+		// Or pop it
+		if(first_loop){
+			// Result of first callback is always moved
+			lua_replace(L, rv);
+			first_loop = false;
+		} else {
+			// Otherwise, what happens depends on the mode
+			if(mode == RUN_CALLBACKS_MODE_FIRST)
+				lua_pop(L, 1);
+			else if(mode == RUN_CALLBACKS_MODE_LAST)
+				lua_replace(L, rv);
+			else if(mode == RUN_CALLBACKS_MODE_AND ||
+					mode == RUN_CALLBACKS_MODE_AND_SC){
+				if(lua_toboolean(L, rv) == true &&
+						lua_toboolean(L, -1) == false)
+					lua_replace(L, rv);
+				else
+					lua_pop(L, 1);
+			}
+			else if(mode == RUN_CALLBACKS_MODE_OR ||
+					mode == RUN_CALLBACKS_MODE_OR_SC){
+				if(lua_toboolean(L, rv) == false &&
+						lua_toboolean(L, -1) == true)
+					lua_replace(L, rv);
+				else
+					lua_pop(L, 1);
+			}
+			else
+				assert(0);
+		}
+
+		// Handle short circuit modes
+		if(mode == RUN_CALLBACKS_MODE_AND_SC &&
+				lua_toboolean(L, rv) == false)
+			break;
+		else if(mode == RUN_CALLBACKS_MODE_OR_SC &&
+				lua_toboolean(L, rv) == true)
+			break;
+
+		// value removed, keep key for next iteration
+	}
+
+	// Remove stuff from stack, leaving only the return value
+	lua_settop(L, rv);
+
+	// Fix return value in case no callbacks were called
+	if(first_loop){
+		if(mode == RUN_CALLBACKS_MODE_AND ||
+				mode == RUN_CALLBACKS_MODE_AND_SC){
+			lua_pop(L, 1);
+			lua_pushboolean(L, true);
+		}
+		else if(mode == RUN_CALLBACKS_MODE_OR ||
+				mode == RUN_CALLBACKS_MODE_OR_SC){
+			lua_pop(L, 1);
+			lua_pushboolean(L, false);
+		}
+	}
+}
+
 bool scriptapi_on_chat_message(lua_State *L, const std::string &name,
 		const std::string &message)
 {
@@ -3910,30 +4387,13 @@ bool scriptapi_on_chat_message(lua_State *L, const std::string &name,
 	// Get minetest.registered_on_chat_messages
 	lua_getglobal(L, "minetest");
 	lua_getfield(L, -1, "registered_on_chat_messages");
-	luaL_checktype(L, -1, LUA_TTABLE);
-	int table = lua_gettop(L);
-	// Foreach
-	lua_pushnil(L);
-	while(lua_next(L, table) != 0){
-		// key at index -2 and value at index -1
-		luaL_checktype(L, -1, LUA_TFUNCTION);
-		// Call function
-		lua_pushstring(L, name.c_str());
-		lua_pushstring(L, message.c_str());
-		if(lua_pcall(L, 2, 1, 0))
-			script_error(L, "error: %s", lua_tostring(L, -1));
-		bool ate = lua_toboolean(L, -1);
-		lua_pop(L, 1);
-		if(ate)
-			return true;
-		// value removed, keep key for next iteration
-	}
-	return false;
+	// Call callbacks
+	lua_pushstring(L, name.c_str());
+	lua_pushstring(L, message.c_str());
+	scriptapi_run_callbacks(L, 2, RUN_CALLBACKS_MODE_OR_SC);
+	bool ate = lua_toboolean(L, -1);
+	return ate;
 }
-
-/*
-	misc
-*/
 
 void scriptapi_on_newplayer(lua_State *L, ServerActiveObject *player)
 {
@@ -3944,45 +4404,24 @@ void scriptapi_on_newplayer(lua_State *L, ServerActiveObject *player)
 	// Get minetest.registered_on_newplayers
 	lua_getglobal(L, "minetest");
 	lua_getfield(L, -1, "registered_on_newplayers");
-	luaL_checktype(L, -1, LUA_TTABLE);
-	int table = lua_gettop(L);
-	// Foreach
-	lua_pushnil(L);
-	while(lua_next(L, table) != 0){
-		// key at index -2 and value at index -1
-		luaL_checktype(L, -1, LUA_TFUNCTION);
-		// Call function
-		objectref_get_or_create(L, player);
-		if(lua_pcall(L, 1, 0, 0))
-			script_error(L, "error: %s", lua_tostring(L, -1));
-		// value removed, keep key for next iteration
-	}
+	// Call callbacks
+	objectref_get_or_create(L, player);
+	scriptapi_run_callbacks(L, 1, RUN_CALLBACKS_MODE_FIRST);
 }
 
 void scriptapi_on_dieplayer(lua_State *L, ServerActiveObject *player)
 {
-    realitycheck(L);
-    assert(lua_checkstack(L, 20));
-    StackUnroller stack_unroller(L);
-    
-    // Get minetest.registered_on_dieplayers
-    lua_getglobal(L, "minetest");
-    lua_getfield(L, -1, "registered_on_dieplayers");
-    luaL_checktype(L, -1, LUA_TTABLE);
-    int table = lua_gettop(L);
-    // Foreach
-    lua_pushnil(L);
-    while(lua_next(L, table) != 0){
-        // key at index -2 and value at index -1
-       luaL_checktype(L, -1, LUA_TFUNCTION);
-        // Call function
-       objectref_get_or_create(L, player);
-        if(lua_pcall(L, 1, 0, 0))
-            script_error(L, "error: %s", lua_tostring(L, -1));
-        // value removed, keep key for next iteration
-    }
-}
+	realitycheck(L);
+	assert(lua_checkstack(L, 20));
+	StackUnroller stack_unroller(L);
 
+	// Get minetest.registered_on_dieplayers
+	lua_getglobal(L, "minetest");
+	lua_getfield(L, -1, "registered_on_dieplayers");
+	// Call callbacks
+	objectref_get_or_create(L, player);
+	scriptapi_run_callbacks(L, 1, RUN_CALLBACKS_MODE_FIRST);
+}
 
 bool scriptapi_on_respawnplayer(lua_State *L, ServerActiveObject *player)
 {
@@ -3990,40 +4429,142 @@ bool scriptapi_on_respawnplayer(lua_State *L, ServerActiveObject *player)
 	assert(lua_checkstack(L, 20));
 	StackUnroller stack_unroller(L);
 
-	dstream<<"player: "<<player<<"   id: "<<player->getId()<<std::endl;
-
-	bool positioning_handled_by_some = false;
-
 	// Get minetest.registered_on_respawnplayers
 	lua_getglobal(L, "minetest");
 	lua_getfield(L, -1, "registered_on_respawnplayers");
-	luaL_checktype(L, -1, LUA_TTABLE);
-	int table = lua_gettop(L);
-	// Foreach
-	lua_pushnil(L);
-	while(lua_next(L, table) != 0){
-		// key at index -2 and value at index -1
-		luaL_checktype(L, -1, LUA_TFUNCTION);
-		// Call function
-		objectref_get_or_create(L, player);
-		if(lua_pcall(L, 1, 1, 0))
-			script_error(L, "error: %s", lua_tostring(L, -1));
-		bool positioning_handled = lua_toboolean(L, -1);
-		lua_pop(L, 1);
-		if(positioning_handled)
-			positioning_handled_by_some = true;
-		// value removed, keep key for next iteration
-	}
+	// Call callbacks
+	objectref_get_or_create(L, player);
+	scriptapi_run_callbacks(L, 1, RUN_CALLBACKS_MODE_OR);
+	bool positioning_handled_by_some = lua_toboolean(L, -1);
 	return positioning_handled_by_some;
 }
 
-void scriptapi_get_creative_inventory(lua_State *L, ServerRemotePlayer *player)
+void scriptapi_on_joinplayer(lua_State *L, ServerActiveObject *player)
 {
+	realitycheck(L);
+	assert(lua_checkstack(L, 20));
+	StackUnroller stack_unroller(L);
+
+	// Get minetest.registered_on_joinplayers
+	lua_getglobal(L, "minetest");
+	lua_getfield(L, -1, "registered_on_joinplayers");
+	// Call callbacks
+	objectref_get_or_create(L, player);
+	scriptapi_run_callbacks(L, 1, RUN_CALLBACKS_MODE_FIRST);
+}
+
+void scriptapi_on_leaveplayer(lua_State *L, ServerActiveObject *player)
+{
+	realitycheck(L);
+	assert(lua_checkstack(L, 20));
+	StackUnroller stack_unroller(L);
+
+	// Get minetest.registered_on_leaveplayers
+	lua_getglobal(L, "minetest");
+	lua_getfield(L, -1, "registered_on_leaveplayers");
+	// Call callbacks
+	objectref_get_or_create(L, player);
+	scriptapi_run_callbacks(L, 1, RUN_CALLBACKS_MODE_FIRST);
+}
+
+void scriptapi_get_creative_inventory(lua_State *L, ServerActiveObject *player)
+{
+	realitycheck(L);
+	assert(lua_checkstack(L, 20));
+	StackUnroller stack_unroller(L);
+	
+	Inventory *inv = player->getInventory();
+	assert(inv);
+
 	lua_getglobal(L, "minetest");
 	lua_getfield(L, -1, "creative_inventory");
 	luaL_checktype(L, -1, LUA_TTABLE);
-	inventory_set_list_from_lua(&player->inventory, "main", L, -1,
-			PLAYER_INVENTORY_SIZE);
+	inventory_set_list_from_lua(inv, "main", L, -1, PLAYER_INVENTORY_SIZE);
+}
+
+static void get_auth_handler(lua_State *L)
+{
+	lua_getglobal(L, "minetest");
+	lua_getfield(L, -1, "registered_auth_handler");
+	if(lua_isnil(L, -1)){
+		lua_pop(L, 1);
+		lua_getfield(L, -1, "builtin_auth_handler");
+	}
+	if(lua_type(L, -1) != LUA_TTABLE)
+		throw LuaError(L, "Authentication handler table not valid");
+}
+
+bool scriptapi_get_auth(lua_State *L, const std::string &playername,
+		std::string *dst_password, std::set<std::string> *dst_privs)
+{
+	realitycheck(L);
+	assert(lua_checkstack(L, 20));
+	StackUnroller stack_unroller(L);
+	
+	get_auth_handler(L);
+	lua_getfield(L, -1, "get_auth");
+	if(lua_type(L, -1) != LUA_TFUNCTION)
+		throw LuaError(L, "Authentication handler missing get_auth");
+	lua_pushstring(L, playername.c_str());
+	if(lua_pcall(L, 1, 1, 0))
+		script_error(L, "error: %s", lua_tostring(L, -1));
+	
+	// nil = login not allowed
+	if(lua_isnil(L, -1))
+		return false;
+	luaL_checktype(L, -1, LUA_TTABLE);
+	
+	std::string password;
+	bool found = getstringfield(L, -1, "password", password);
+	if(!found)
+		throw LuaError(L, "Authentication handler didn't return password");
+	if(dst_password)
+		*dst_password = password;
+
+	lua_getfield(L, -1, "privileges");
+	if(!lua_istable(L, -1))
+		throw LuaError(L,
+				"Authentication handler didn't return privilege table");
+	if(dst_privs)
+		read_privileges(L, -1, *dst_privs);
+	lua_pop(L, 1);
+	
+	return true;
+}
+
+void scriptapi_create_auth(lua_State *L, const std::string &playername,
+		const std::string &password)
+{
+	realitycheck(L);
+	assert(lua_checkstack(L, 20));
+	StackUnroller stack_unroller(L);
+	
+	get_auth_handler(L);
+	lua_getfield(L, -1, "create_auth");
+	if(lua_type(L, -1) != LUA_TFUNCTION)
+		throw LuaError(L, "Authentication handler missing create_auth");
+	lua_pushstring(L, playername.c_str());
+	lua_pushstring(L, password.c_str());
+	if(lua_pcall(L, 2, 0, 0))
+		script_error(L, "error: %s", lua_tostring(L, -1));
+}
+
+bool scriptapi_set_password(lua_State *L, const std::string &playername,
+		const std::string &password)
+{
+	realitycheck(L);
+	assert(lua_checkstack(L, 20));
+	StackUnroller stack_unroller(L);
+	
+	get_auth_handler(L);
+	lua_getfield(L, -1, "set_password");
+	if(lua_type(L, -1) != LUA_TFUNCTION)
+		throw LuaError(L, "Authentication handler missing set_password");
+	lua_pushstring(L, playername.c_str());
+	lua_pushstring(L, password.c_str());
+	if(lua_pcall(L, 2, 1, 0))
+		script_error(L, "error: %s", lua_tostring(L, -1));
+	return lua_toboolean(L, -1);
 }
 
 /*
@@ -4195,22 +4736,13 @@ void scriptapi_environment_step(lua_State *L, float dtime)
 	// Get minetest.registered_globalsteps
 	lua_getglobal(L, "minetest");
 	lua_getfield(L, -1, "registered_globalsteps");
-	luaL_checktype(L, -1, LUA_TTABLE);
-	int table = lua_gettop(L);
-	// Foreach
-	lua_pushnil(L);
-	while(lua_next(L, table) != 0){
-		// key at index -2 and value at index -1
-		luaL_checktype(L, -1, LUA_TFUNCTION);
-		// Call function
-		lua_pushnumber(L, dtime);
-		if(lua_pcall(L, 1, 0, 0))
-			script_error(L, "error: %s", lua_tostring(L, -1));
-		// value removed, keep key for next iteration
-	}
+	// Call callbacks
+	lua_pushnumber(L, dtime);
+	scriptapi_run_callbacks(L, 1, RUN_CALLBACKS_MODE_FIRST);
 }
 
-void scriptapi_environment_on_generated(lua_State *L, v3s16 minp, v3s16 maxp)
+void scriptapi_environment_on_generated(lua_State *L, v3s16 minp, v3s16 maxp,
+		u32 blockseed)
 {
 	realitycheck(L);
 	assert(lua_checkstack(L, 20));
@@ -4220,20 +4752,11 @@ void scriptapi_environment_on_generated(lua_State *L, v3s16 minp, v3s16 maxp)
 	// Get minetest.registered_on_generateds
 	lua_getglobal(L, "minetest");
 	lua_getfield(L, -1, "registered_on_generateds");
-	luaL_checktype(L, -1, LUA_TTABLE);
-	int table = lua_gettop(L);
-	// Foreach
-	lua_pushnil(L);
-	while(lua_next(L, table) != 0){
-		// key at index -2 and value at index -1
-		luaL_checktype(L, -1, LUA_TFUNCTION);
-		// Call function
-		push_v3s16(L, minp);
-		push_v3s16(L, maxp);
-		if(lua_pcall(L, 2, 0, 0))
-			script_error(L, "error: %s", lua_tostring(L, -1));
-		// value removed, keep key for next iteration
-	}
+	// Call callbacks
+	push_v3s16(L, minp);
+	push_v3s16(L, maxp);
+	lua_pushnumber(L, blockseed);
+	scriptapi_run_callbacks(L, 3, RUN_CALLBACKS_MODE_FIRST);
 }
 
 /*
@@ -4366,7 +4889,7 @@ std::string scriptapi_luaentity_get_staticdata(lua_State *L, u16 id)
 }
 
 void scriptapi_luaentity_get_properties(lua_State *L, u16 id,
-		LuaEntityProperties *prop)
+		ObjectProperties *prop)
 {
 	realitycheck(L);
 	assert(lua_checkstack(L, 20));
@@ -4377,52 +4900,11 @@ void scriptapi_luaentity_get_properties(lua_State *L, u16 id,
 	luaentity_get(L, id);
 	//int object = lua_gettop(L);
 
-	/* Read stuff */
+	// Set default values that differ from ObjectProperties defaults
+	prop->hp_max = 10;
 	
-	prop->hp_max = getintfield_default(L, -1, "hp_max", 10);
-
-	getboolfield(L, -1, "physical", prop->physical);
-
-	getfloatfield(L, -1, "weight", prop->weight);
-
-	lua_getfield(L, -1, "collisionbox");
-	if(lua_istable(L, -1))
-		prop->collisionbox = read_aabbox3df32(L, -1, 1.0);
-	lua_pop(L, 1);
-
-	getstringfield(L, -1, "visual", prop->visual);
-	
-	lua_getfield(L, -1, "visual_size");
-	if(lua_istable(L, -1))
-		prop->visual_size = read_v2f(L, -1);
-	lua_pop(L, 1);
-
-	lua_getfield(L, -1, "textures");
-	if(lua_istable(L, -1)){
-		prop->textures.clear();
-		int table = lua_gettop(L);
-		lua_pushnil(L);
-		while(lua_next(L, table) != 0){
-			// key at index -2 and value at index -1
-			if(lua_isstring(L, -1))
-				prop->textures.push_back(lua_tostring(L, -1));
-			else
-				prop->textures.push_back("");
-			// removes value, keeps key for next iteration
-			lua_pop(L, 1);
-		}
-	}
-	lua_pop(L, 1);
-	
-	lua_getfield(L, -1, "spritediv");
-	if(lua_istable(L, -1))
-		prop->spritediv = read_v2s16(L, -1);
-	lua_pop(L, 1);
-
-	lua_getfield(L, -1, "initial_sprite_basepos");
-	if(lua_istable(L, -1))
-		prop->initial_sprite_basepos = read_v2s16(L, -1);
-	lua_pop(L, 1);
+	// Read stuff
+	read_object_properties(L, -1, prop);
 }
 
 void scriptapi_luaentity_step(lua_State *L, u16 id, float dtime)

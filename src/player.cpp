@@ -31,6 +31,8 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "collision.h"
 #include "environment.h"
 #include "gamedef.h"
+#include "event.h"
+#include "content_sao.h"
 
 Player::Player(IGameDef *gamedef):
 	touching_ground(false),
@@ -38,9 +40,9 @@ Player::Player(IGameDef *gamedef):
 	in_water_stable(false),
 	is_climbing(false),
 	swimming_up(false),
+	camera_barely_in_ceiling(false),
 	inventory(gamedef->idef()),
-	inventory_backup(NULL),
-	hp(20),
+	hp(PLAYER_MAX_HP),
 	peer_id(PEER_ID_INEXISTENT),
 // protected
 	m_gamedef(gamedef),
@@ -50,21 +52,15 @@ Player::Player(IGameDef *gamedef):
 	m_position(0,0,0)
 {
 	updateName("<not set>");
-	resetInventory();
-}
-
-Player::~Player()
-{
-	delete inventory_backup;
-}
-
-void Player::resetInventory()
-{
 	inventory.clear();
 	inventory.addList("main", PLAYER_INVENTORY_SIZE);
 	inventory.addList("craft", 9);
 	inventory.addList("craftpreview", 1);
 	inventory.addList("craftresult", 1);
+}
+
+Player::~Player()
+{
 }
 
 // Y direction is ignored
@@ -125,12 +121,7 @@ void Player::serialize(std::ostream &os)
 
 	os<<"PlayerArgsEnd\n";
 	
-	// If actual inventory is backed up due to creative mode, save it
-	// instead of the dummy creative mode inventory
-	if(inventory_backup)
-		inventory_backup->serialize(os);
-	else
-		inventory.serialize(os);
+	inventory.serialize(os);
 }
 
 void Player::deSerialize(std::istream &is)
@@ -367,6 +358,7 @@ void LocalPlayer::move(f32 dtime, Map &map, f32 pos_max_d,
 
 		Player is allowed to jump when this is true.
 	*/
+	bool touching_ground_was = touching_ground;
 	touching_ground = false;
 
 	/*std::cout<<"Checking collisions for ("
@@ -608,6 +600,22 @@ void LocalPlayer::move(f32 dtime, Map &map, f32 pos_max_d,
 			collision_info->push_back(info);
 		}
 	}
+
+	if(!touching_ground_was && touching_ground){
+		MtEvent *e = new SimpleTriggerEvent("PlayerRegainGround");
+		m_gamedef->event()->put(e);
+	}
+
+	{
+		camera_barely_in_ceiling = false;
+		v3s16 camera_np = floatToInt(getEyePosition(), BS);
+		MapNode n = map.getNodeNoEx(camera_np);
+		if(n.getContent() != CONTENT_IGNORE){
+			if(nodemgr->get(n).walkable){
+				camera_barely_in_ceiling = true;
+			}
+		}
+	}
 }
 
 void LocalPlayer::move(f32 dtime, Map &map, f32 pos_max_d)
@@ -723,6 +731,9 @@ void LocalPlayer::applyControl(float dtime)
 			{
 				speed.Y = 6.5*BS;
 				setSpeed(speed);
+				
+				MtEvent *e = new SimpleTriggerEvent("PlayerJump");
+				m_gamedef->event()->put(e);
 			}
 		}
 		// Use the oscillating value for getting out of water
@@ -759,5 +770,23 @@ void LocalPlayer::applyControl(float dtime)
 	// Accelerate to target speed with maximum increment
 	accelerate(speed, inc);
 }
+
+v3s16 LocalPlayer::getStandingNodePos()
+{
+	if(m_sneak_node_exists)
+		return m_sneak_node;
+	return floatToInt(getPosition(), BS);
+}
+
 #endif
 
+/*
+	RemotePlayer
+*/
+
+void RemotePlayer::setPosition(const v3f &position)
+{
+	Player::setPosition(position);
+	if(m_sao)
+		m_sao->setBasePosition(position);
+}

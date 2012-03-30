@@ -55,6 +55,11 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "quicktune_shortcutter.h"
 #include "clientmap.h"
 #include "sky.h"
+#include "sound.h"
+#if USE_SOUND
+	#include "sound_openal.h"
+#endif
+#include "event_manager.h"
 #include <list>
 
 /*
@@ -775,6 +780,126 @@ public:
 	}
 };
 
+class NodeDugEvent: public MtEvent
+{
+public:
+	v3s16 p;
+	MapNode n;
+	
+	NodeDugEvent(v3s16 p, MapNode n):
+		p(p),
+		n(n)
+	{}
+	const char* getType() const
+	{return "NodeDug";}
+};
+
+class SoundMaker
+{
+	ISoundManager *m_sound;
+	INodeDefManager *m_ndef;
+public:
+	float m_player_step_timer;
+
+	SimpleSoundSpec m_player_step_sound;
+	SimpleSoundSpec m_player_leftpunch_sound;
+	SimpleSoundSpec m_player_rightpunch_sound;
+
+	SoundMaker(ISoundManager *sound, INodeDefManager *ndef):
+		m_sound(sound),
+		m_ndef(ndef),
+		m_player_step_timer(0)
+	{
+	}
+
+	void playPlayerStep()
+	{
+		if(m_player_step_timer <= 0 && m_player_step_sound.exists()){
+			m_player_step_timer = 0.03;
+			m_sound->playSound(m_player_step_sound, false);
+		}
+	}
+
+	static void viewBobbingStep(MtEvent *e, void *data)
+	{
+		SoundMaker *sm = (SoundMaker*)data;
+		sm->playPlayerStep();
+	}
+
+	static void playerRegainGround(MtEvent *e, void *data)
+	{
+		SoundMaker *sm = (SoundMaker*)data;
+		sm->playPlayerStep();
+	}
+
+	static void playerJump(MtEvent *e, void *data)
+	{
+		//SoundMaker *sm = (SoundMaker*)data;
+	}
+
+	static void cameraPunchLeft(MtEvent *e, void *data)
+	{
+		SoundMaker *sm = (SoundMaker*)data;
+		sm->m_sound->playSound(sm->m_player_leftpunch_sound, false);
+	}
+
+	static void cameraPunchRight(MtEvent *e, void *data)
+	{
+		SoundMaker *sm = (SoundMaker*)data;
+		sm->m_sound->playSound(sm->m_player_rightpunch_sound, false);
+	}
+
+	static void nodeDug(MtEvent *e, void *data)
+	{
+		SoundMaker *sm = (SoundMaker*)data;
+		NodeDugEvent *nde = (NodeDugEvent*)e;
+		sm->m_sound->playSound(sm->m_ndef->get(nde->n).sound_dug, false);
+	}
+
+	void registerReceiver(MtEventManager *mgr)
+	{
+		mgr->reg("ViewBobbingStep", SoundMaker::viewBobbingStep, this);
+		mgr->reg("PlayerRegainGround", SoundMaker::playerRegainGround, this);
+		mgr->reg("PlayerJump", SoundMaker::playerJump, this);
+		mgr->reg("CameraPunchLeft", SoundMaker::cameraPunchLeft, this);
+		mgr->reg("CameraPunchRight", SoundMaker::cameraPunchRight, this);
+		mgr->reg("NodeDug", SoundMaker::nodeDug, this);
+	}
+
+	void step(float dtime)
+	{
+		m_player_step_timer -= dtime;
+	}
+};
+
+// Locally stored sounds don't need to be preloaded because of this
+class GameOnDemandSoundFetcher: public OnDemandSoundFetcher
+{
+	std::set<std::string> m_fetched;
+public:
+
+	void fetchSounds(const std::string &name,
+			std::set<std::string> &dst_paths,
+			std::set<std::string> &dst_datas)
+	{
+		if(m_fetched.count(name))
+			return;
+		m_fetched.insert(name);
+		std::string base = porting::path_share + DIR_DELIM + "testsounds";
+		dst_paths.insert(base + DIR_DELIM + name + ".ogg");
+		dst_paths.insert(base + DIR_DELIM + name + ".0.ogg");
+		dst_paths.insert(base + DIR_DELIM + name + ".1.ogg");
+		dst_paths.insert(base + DIR_DELIM + name + ".2.ogg");
+		dst_paths.insert(base + DIR_DELIM + name + ".3.ogg");
+		dst_paths.insert(base + DIR_DELIM + name + ".4.ogg");
+		dst_paths.insert(base + DIR_DELIM + name + ".5.ogg");
+		dst_paths.insert(base + DIR_DELIM + name + ".6.ogg");
+		dst_paths.insert(base + DIR_DELIM + name + ".7.ogg");
+		dst_paths.insert(base + DIR_DELIM + name + ".8.ogg");
+		dst_paths.insert(base + DIR_DELIM + name + ".9.ogg");
+	}
+};
+
 void the_game(
 	bool &kill,
 	bool random_input,
@@ -822,7 +947,32 @@ void the_game(
 	IWritableItemDefManager *itemdef = createItemDefManager();
 	// Create node definition manager
 	IWritableNodeDefManager *nodedef = createNodeDefManager();
+	
+	// Sound fetcher (useful when testing)
+	GameOnDemandSoundFetcher soundfetcher;
 
+	// Sound manager
+	ISoundManager *sound = NULL;
+	bool sound_is_dummy = false;
+#if USE_SOUND
+	infostream<<"Attempting to use OpenAL audio"<<std::endl;
+	sound = createOpenALSoundManager(&soundfetcher);
+	if(!sound)
+		infostream<<"Failed to initialize OpenAL audio"<<std::endl;
+#endif
+	if(!sound){
+		infostream<<"Using dummy audio."<<std::endl;
+		sound = &dummySoundManager;
+		sound_is_dummy = true;
+	}
+
+	// Event manager
+	EventManager eventmgr;
+
+	// Sound maker
+	SoundMaker soundmaker(sound, nodedef);
+	soundmaker.registerReceiver(&eventmgr);
+	
 	// Add chat log output for errors to be shown in chat
 	LogOutputBuffer chat_log_error_buf(LMT_ERROR);
 
@@ -842,6 +992,7 @@ void the_game(
 		server->start(port);
 	}
 
+	try{
 	do{ // Client scope (breakable do-while(0))
 	
 	/*
@@ -854,7 +1005,7 @@ void the_game(
 	MapDrawControl draw_control;
 
 	Client client(device, playername.c_str(), password, draw_control,
-			tsrc, itemdef, nodedef);
+			tsrc, itemdef, nodedef, sound, &eventmgr);
 	
 	// Client acts as our GameDef
 	IGameDef *gamedef = &client;
@@ -989,9 +1140,8 @@ void the_game(
 			ss<<L" Item definitions\n";
 			ss<<(client.nodedefReceived()?L"[X]":L"[  ]");
 			ss<<L" Node definitions\n";
-			//ss<<(client.texturesReceived()?L"[X]":L"[  ]");
-			ss<<L"["<<(int)(client.textureReceiveProgress()*100+0.5)<<L"%] ";
-			ss<<L" Textures\n";
+			ss<<L"["<<(int)(client.mediaReceiveProgress()*100+0.5)<<L"%] ";
+			ss<<L" Media\n";
 
 			draw_load_screen(ss.str(), driver, font);
 			
@@ -1019,7 +1169,7 @@ void the_game(
 	/*
 		Create the camera node
 	*/
-	Camera camera(smgr, draw_control);
+	Camera camera(smgr, draw_control, gamedef);
 	if (!camera.successfullyCreated(error_message))
 		return;
 
@@ -1232,7 +1382,7 @@ void the_game(
 		if(object_hit_delay_timer >= 0)
 			object_hit_delay_timer -= dtime;
 		time_from_last_punch += dtime;
-
+		
 		g_profiler->add("Elapsed time", dtime);
 		g_profiler->avg("FPS", 1./dtime);
 
@@ -1922,9 +2072,23 @@ void the_game(
 			client.getEnv().getClientMap().updateCamera(camera_position,
 				camera_direction, camera_fov);
 		}
+		
+		// Update sound listener
+		sound->updateListener(camera.getCameraNode()->getPosition(),
+				v3f(0,0,0), // velocity
+				camera.getCameraNode()->getTarget(),
+				camera.getCameraNode()->getUpVector());
 
-		//timer2.stop();
-		//TimeTaker //timer3("//timer3");
+		/*
+			Update sound maker
+		*/
+		{
+			soundmaker.step(dtime);
+			
+			ClientMap &map = client.getEnv().getClientMap();
+			MapNode n = map.getNodeNoEx(player->getStandingNodePos());
+			soundmaker.m_player_step_sound = nodedef->get(n).sound_footstep;
+		}
 
 		/*
 			Calculate what block is the crosshair pointing to
@@ -2003,6 +2167,7 @@ void the_game(
 		}
 
 		bool left_punch = false;
+		soundmaker.m_player_leftpunch_sound.name = "";
 
 		if(playeritem_usable && input->getLeftState())
 		{
@@ -2030,6 +2195,11 @@ void the_game(
 				}
 			}
 			
+			// We can't actually know, but assume the sound of right-clicking
+			// to be the sound of placing a node
+			soundmaker.m_player_rightpunch_sound.gain = 0.5;
+			soundmaker.m_player_rightpunch_sound.name = "default_place_node";
+			
 			/*
 				Handle digging
 			*/
@@ -2054,6 +2224,20 @@ void the_game(
 					const ToolCapabilities *tp = hand.tool_capabilities;
 					if(tp)
 						params = getDigParams(nodedef->get(n).groups, tp);
+				}
+				
+				SimpleSoundSpec sound_dig = nodedef->get(n).sound_dig;
+				if(sound_dig.exists()){
+					if(sound_dig.name == "__group"){
+						if(params.main_group != ""){
+							soundmaker.m_player_leftpunch_sound.gain = 0.5;
+							soundmaker.m_player_leftpunch_sound.name =
+									std::string("default_dig_") +
+											params.main_group;
+						}
+					} else{
+						soundmaker.m_player_leftpunch_sound = sound_dig;
+					}
 				}
 
 				float dig_time_complete = 0.0;
@@ -2094,6 +2278,7 @@ void the_game(
 					infostream<<"Digging completed"<<std::endl;
 					client.interact(2, pointed);
 					client.setCrack(-1, v3s16(0,0,0));
+					MapNode wasnode = map.getNode(nodepos);
 					client.removeNode(nodepos);
 
 					dig_time = 0;
@@ -2104,17 +2289,17 @@ void the_game(
 
 					// We don't want a corresponding delay to
 					// very time consuming nodes
-					if(nodig_delay_timer > 0.5)
-					{
-						nodig_delay_timer = 0.5;
-					}
+					if(nodig_delay_timer > 0.3)
+						nodig_delay_timer = 0.3;
 					// We want a slight delay to very little
 					// time consuming nodes
 					float mindelay = 0.15;
 					if(nodig_delay_timer < mindelay)
-					{
 						nodig_delay_timer = mindelay;
-					}
+					
+					// Send event to trigger sound
+					MtEvent *e = new NodeDugEvent(nodepos, wasnode);
+					gamedef->event()->put(e);
 				}
 
 				dig_time += dtime;
@@ -2535,7 +2720,7 @@ void the_game(
 			ItemStack item;
 			if(mlist != NULL)
 				item = mlist->getItem(client.getPlayerItem());
-			camera.wield(item, gamedef);
+			camera.wield(item);
 		}
 		
 		/*
@@ -2728,10 +2913,20 @@ void the_game(
 
 	// Client scope (client is destructed before destructing *def and tsrc)
 	}while(0);
-
-	delete tsrc;
+	} // try-catch
+	catch(SerializationError &e)
+	{
+		error_message = L"A serialization error occurred:\n"
+				+ narrow_to_wide(e.what()) + L"\n\nThe server is probably "
+				L" running a different version of Minetest.";
+		errorstream<<wide_to_narrow(error_message)<<std::endl;
+	}
+	
+	if(!sound_is_dummy)
+		delete sound;
 	delete nodedef;
 	delete itemdef;
+	delete tsrc;
 }
 
 

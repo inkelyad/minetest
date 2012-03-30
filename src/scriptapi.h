@@ -23,13 +23,13 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "irrlichttypes.h"
 #include <string>
 #include "mapnode.h"
+#include <set>
 
 class Server;
 class ServerEnvironment;
 class ServerActiveObject;
-class ServerRemotePlayer;
 typedef struct lua_State lua_State;
-struct LuaEntityProperties;
+struct ObjectProperties;
 struct ItemStack;
 struct PointedThing;
 //class IGameDef;
@@ -51,13 +51,22 @@ bool scriptapi_on_chat_message(lua_State *L, const std::string &name,
 // On environment step
 void scriptapi_environment_step(lua_State *L, float dtime);
 // After generating a piece of map
-void scriptapi_environment_on_generated(lua_State *L, v3s16 minp, v3s16 maxp);
+void scriptapi_environment_on_generated(lua_State *L, v3s16 minp, v3s16 maxp,
+		u32 blockseed);
 
 /* misc */
 void scriptapi_on_newplayer(lua_State *L, ServerActiveObject *player);
 void scriptapi_on_dieplayer(lua_State *L, ServerActiveObject *player);
 bool scriptapi_on_respawnplayer(lua_State *L, ServerActiveObject *player);
-void scriptapi_get_creative_inventory(lua_State *L, ServerRemotePlayer *player);
+void scriptapi_on_joinplayer(lua_State *L, ServerActiveObject *player);
+void scriptapi_on_leaveplayer(lua_State *L, ServerActiveObject *player);
+void scriptapi_get_creative_inventory(lua_State *L, ServerActiveObject *player);
+bool scriptapi_get_auth(lua_State *L, const std::string &playername,
+		std::string *dst_password, std::set<std::string> *dst_privs);
+void scriptapi_create_auth(lua_State *L, const std::string &playername,
+		const std::string &password);
+bool scriptapi_set_password(lua_State *L, const std::string &playername,
+		const std::string &password);
 
 /* item callbacks */
 bool scriptapi_item_on_drop(lua_State *L, ItemStack &item,
@@ -81,7 +90,7 @@ void scriptapi_luaentity_activate(lua_State *L, u16 id,
 void scriptapi_luaentity_rm(lua_State *L, u16 id);
 std::string scriptapi_luaentity_get_staticdata(lua_State *L, u16 id);
 void scriptapi_luaentity_get_properties(lua_State *L, u16 id,
-		LuaEntityProperties *prop);
+		ObjectProperties *prop);
 void scriptapi_luaentity_step(lua_State *L, u16 id, float dtime);
 void scriptapi_luaentity_punch(lua_State *L, u16 id,
 		ServerActiveObject *puncher, float time_from_last_punch,

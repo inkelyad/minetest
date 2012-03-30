@@ -20,29 +20,6 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #ifndef LUAENTITY_COMMON_HEADER
 #define LUAENTITY_COMMON_HEADER
 
-#include <string>
-#include "irrlichttypes.h"
-#include <iostream>
-
-struct LuaEntityProperties
-{
-	// Values are BS=1
-	s16 hp_max;
-	bool physical;
-	float weight;
-	core::aabbox3d<f32> collisionbox;
-	std::string visual;
-	v2f visual_size;
-	core::array<std::string> textures;
-	v2s16 spritediv;
-	v2s16 initial_sprite_basepos;
-
-	LuaEntityProperties();
-	std::string dump();
-	void serialize(std::ostream &os);
-	void deSerialize(std::istream &is);
-};
-
 #define LUAENTITY_CMD_UPDATE_POSITION 0
 #define LUAENTITY_CMD_SET_TEXTURE_MOD 1
 #define LUAENTITY_CMD_SET_SPRITE 2

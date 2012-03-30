@@ -10,7 +10,7 @@ project(minetest)
 # Also remember to set PROTOCOL_VERSION in clientserver.h when releasing
 set(VERSION_MAJOR 0)
 set(VERSION_MINOR 4)
-set(VERSION_PATCH dev-20120320)
+set(VERSION_PATCH dev-20120326)
 set(VERSION_STRING "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}")
 
 MESSAGE(STATUS "*** Will build version ${VERSION_STRING} ***")
@@ -85,13 +85,17 @@ elseif(UNIX) # Linux, BSD etc
 endif()
 
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/builtin" DESTINATION "${SHAREDIR}")
-install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/games/mesetint" DESTINATION "${SHAREDIR}/games")
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/games/minimal" DESTINATION "${SHAREDIR}/games")
+set(MINETEST_GAME_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/games/minetest_game")
+if(EXISTS ${MINETEST_GAME_SOURCE} AND IS_DIRECTORY ${MINETEST_GAME_SOURCE})
+	install(DIRECTORY ${MINETEST_GAME_SOURCE} DESTINATION "${SHAREDIR}/games")
+endif()
 if(BUILD_CLIENT)
 	#install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/sounds/base/pack" DESTINATION "${SHAREDIR}/sounds/base")
 	install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/textures/base/pack" DESTINATION "${SHAREDIR}/textures/base")
 endif()
 if(RUN_IN_PLACE)
-	install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/mods/mesetint/mods_here.txt" DESTINATION "${SHAREDIR}/mods/mesetint")
+	install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/mods/minetest/mods_here.txt" DESTINATION "${SHAREDIR}/mods/minetest")
 endif()
 
 install(FILES "README.txt" DESTINATION "${DOCDIR}")

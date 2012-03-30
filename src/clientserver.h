@@ -28,7 +28,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 	PROTOCOL_VERSION 3:
 		Base for writing changes here
 	PROTOCOL_VERSION 4:
-		Add TOCLIENT_TEXTURES
+		Add TOCLIENT_MEDIA
 		Add TOCLIENT_TOOLDEF
 		Add TOCLIENT_NODEDEF
 		Add TOCLIENT_CRAFTITEMDEF
@@ -46,9 +46,13 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 		Compress the contents of TOCLIENT_ITEMDEF and TOCLIENT_NODEDEF
 	PROTOCOL_VERSION 8:
 		Digging based on item groups
+		Many things
+	PROTOCOL_VERSION 9:
+		ContentFeatures and NodeDefManager use a different serialization
+		    format; better for future version cross-compatibility
 */
 
-#define PROTOCOL_VERSION 8
+#define PROTOCOL_VERSION 9
 
 #define PROTOCOL_ID 0x4f457403
 
@@ -196,7 +200,7 @@ enum ToClientCommand
 		wstring reason
 	*/
 
-	TOCLIENT_PLAYERITEM = 0x36,
+	TOCLIENT_PLAYERITEM = 0x36, // Obsolete
 	/*
 		u16 command
 		u16 count of player items
@@ -214,13 +218,13 @@ enum ToClientCommand
 		v3f1000 camera point target (to point the death cause or whatever)
 	*/
 
-	TOCLIENT_TEXTURES = 0x38,
+	TOCLIENT_MEDIA = 0x38,
 	/*
 		u16 command
 		u16 total number of texture bunches
 		u16 index of this bunch
-		u32 number of textures in this bunch
-		for each texture {
+		u32 number of files in this bunch
+		for each file {
 			u16 length of name
 			string name
 			u32 length of data
@@ -249,11 +253,11 @@ enum ToClientCommand
 		serialized CraftiItemDefManager
 	*/
 
-	TOCLIENT_ANNOUNCE_TEXTURES = 0x3c,
+	TOCLIENT_ANNOUNCE_MEDIA = 0x3c,
 
 	/*
 		u16 command
-		u32 number of textures
+		u32 number of files
 		for each texture {
 			u16 length of name
 			string name
@@ -268,7 +272,25 @@ enum ToClientCommand
 		u32 length of next item
 		serialized ItemDefManager
 	*/
+	
+	TOCLIENT_PLAY_SOUND = 0x3f,
+	/*
+		u16 command
+		s32 sound_id
+		u16 len
+		u8[len] sound name
+		s32 gain*1000
+		u8 type (0=local, 1=positional, 2=object)
+		s32[3] pos_nodes*10000
+		u16 object_id
+		u8 loop (bool)
+	*/
 
+	TOCLIENT_STOP_SOUND = 0x40,
+	/*
+		u16 command
+		s32 sound_id
+	*/
 };
 
 enum ToServerCommand
@@ -442,15 +464,21 @@ enum ToServerCommand
 		(Obsoletes TOSERVER_GROUND_ACTION and TOSERVER_CLICK_ACTIVEOBJECT.)
 	*/
 	
-	TOSERVER_REQUEST_TEXTURES = 0x40,
-
+	TOSERVER_REMOVED_SOUNDS = 0x3a,
 	/*
-			u16 command
-			u16 number of textures requested
-			for each texture {
-				u16 length of name
-				string name
-			}
+		u16 command
+		u16 len
+		s32[len] sound_id
+	*/
+
+	TOSERVER_REQUEST_MEDIA = 0x40,
+	/*
+		u16 command
+		u16 number of files requested
+		for each file {
+			u16 length of name
+			string name
+		}
 	 */
 
 };

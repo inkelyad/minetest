@@ -24,6 +24,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "activeobject.h"
 #include "utility.h"
 #include "inventorymanager.h"
+#include "itemgroup.h"
 
 /*
 
@@ -45,6 +46,7 @@ class ServerEnvironment;
 struct ItemStack;
 class Player;
 struct ToolCapabilities;
+struct ObjectProperties;
 
 class ServerActiveObject : public ActiveObject
 {
@@ -55,6 +57,9 @@ public:
 	*/
 	ServerActiveObject(ServerEnvironment *env, v3f pos);
 	virtual ~ServerActiveObject();
+
+	virtual u8 getSendType() const
+	{ return getType(); }
 
 	// Called after id has been set and has been inserted in environment
 	virtual void addedToEnvironment(){};
@@ -143,8 +148,15 @@ public:
 	{}
 	virtual void setHP(s16 hp)
 	{}
-	virtual s16 getHP()
+	virtual s16 getHP() const
 	{ return 0; }
+
+	virtual void setArmorGroups(const ItemGroupList &armor_groups)
+	{}
+	virtual ObjectProperties* accessObjectProperties()
+	{ return NULL; }
+	virtual void notifyObjectPropertiesModified()
+	{}
 
 	// Inventory and wielded item
 	virtual Inventory* getInventory()

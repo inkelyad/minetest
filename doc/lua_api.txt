@@ -55,6 +55,8 @@ mods
 |   |-- textures
 |   |   |-- modname_stuff.png
 |   |   `-- modname_something_else.png
+|   |-- sounds
+|   |-- media
 |   `-- <custom data>
 `-- another
 
@@ -74,9 +76,9 @@ init.lua:
   minetest.setting_get(name) and minetest.setting_getbool(name) can be used
   to read custom or existing settings at load time, if necessary.
 
-textures:
-  These textures will be transferred to the client and can be referred to
-  by the mod.
+textures, sounds, media:
+  Media files (textures, sounds, whatever) that will be transferred to the
+  client and will be available for use by the mod.
 
 Naming convention for registered textual names
 ----------------------------------------------
@@ -117,6 +119,58 @@ Textures
 Mods should generally prefix their textures with modname_, eg. given
 the mod name "foomod", a texture could be called
   "foomod_foothing.png"
+
+Textures are referred to by their complete name, or alternatively by
+stripping out the file extension:
+  eg. foomod_foothing.png
+  eg. foomod_foothing
+
+Sounds
+-------
+Only OGG files are supported.
+
+For positional playing of sounds, only single-channel (mono) files are
+supported. Otherwise OpenAL will play them non-positionally.
+
+Mods should generally prefix their sounds with modname_, eg. given
+the mod name "foomod", a sound could be called
+  "foomod_foosound.ogg"
+
+Sounds are referred to by their name with a dot, a single digit and the
+file extension stripped out.  When a sound is played, the actual sound file
+is chosen randomly from the matching sounds.
+
+When playing the sound "foomod_foosound", the sound is chosen randomly
+from the available ones of the following files:
+  foomod_foosound.ogg
+  foomod_foosound.0.ogg
+  foomod_foosound.1.ogg
+  ...
+  foomod_foosound.9.ogg
+
+Examples of sound parameter tables:
+-- Play locationless on all clients
+{
+	gain = 1.0, -- default
+}
+-- Play locationless to a player
+{
+	to_player = name,
+	gain = 1.0, -- default
+}
+-- Play in a location
+{
+	pos = {x=1,y=2,z=3},
+	gain = 1.0, -- default
+	max_hear_distance = 32, -- default
+}
+-- Play connected to an object, looped
+{
+    object = <an ObjectRef>,
+	gain = 1.0, -- default
+	max_hear_distance = 32, -- default
+    loop = true, -- only sounds connected to objects can be looped
+}
 
 Representations of simple things
 --------------------------------
@@ -160,6 +214,13 @@ eg. {name="default:apple", count=1, wear=0, metadata=""}
 Any time an item must be passed to a function, it can be an
 ItemStack (see below), an itemstring or a table in the above format.
 
+SimpleSoundSpec:
+eg. ""
+eg. "default_place_node"
+eg. {}
+eg. {name="default_place_node"}
+eg. {name="default_place_node", gain=1.0}
+
 Items
 ------
 Node (register_node):
@@ -194,8 +255,8 @@ Groups of items can define what kind of an item it is (eg. wool).
 
 Groups of nodes
 ----------------
-In addition to the general item things, whether a node is diggable and how
-long it takes is defined by using groups.
+In addition to the general item things, groups are used to define whether
+a node is destroyable and how long it takes to destroy by a tool.
 
 Groups of entities
 -------------------
@@ -231,6 +292,7 @@ Special groups
     damage, and get weared out much faster, or not be able to get drops
 	from destroyed nodes.
   - 0 is something that is directly accessible at the start of gameplay
+  - There is no upper limit
 - dig_immediate: (player can always pick up node without tool wear)
   - 2: node is removed without tool wear after 0.5 seconds or so
        (rail, sign)
@@ -238,6 +300,7 @@ Special groups
 
 Known damage and digging time defining groups
 ----------------------------------------------
+Valid ratings for these are 0, 1, 2 and 3, unless otherwise stated.
 - crumbly: dirt, sand
 - cracky: tough but crackable stuff like stone.
 - snappy: something that can be cut using fine tools; eg. leaves, small
@@ -273,59 +336,105 @@ Groups such as **crumbly**, **cracky** and **snappy** are used for this
 purpose. Rating is 1, 2 or 3. A higher rating for such a group implies
 faster digging time.
 
-Also, the **level** group is used.
+The **level** group is used to limit the toughness of nodes a tool can dig
+and to scale the digging times / damage to a greater extent.
+
+^ PLEASE DO UNDERSTAND THIS, otherwise you cannot use the system to it's
+  full potential.
 
 Tools define their properties by a list of parameters for groups. They
 cannot dig other groups; thus it is important to use a standard bunch of
 groups to enable interaction with tools.
 
-**Example definition of the digging capabilities of a tool:**
+**Tools define:**
+  * Full punch interval
+  * Maximum drop level
+  * For an arbitrary list of groups:
+    * Uses (until the tool breaks)
+    * Maximum level (usually 0, 1, 2 or 3)
+    * Digging times
+
+**Full punch interval**:
+When used as a weapon, the tool will do full damage if this time is spent
+between punches. If eg. half the time is spent, the tool will do half
+damage.
+
+**Maximum drop level**
+Suggests the maximum level of node, when dug with the tool, that will drop
+it's useful item. (eg. iron ore to drop a lump of iron).
+- This is not automated; it is the responsibility of the node definition
+  to implement this
+
+**Uses**
+Determines how many uses the tool has when it is used for digging a node,
+of this group, of the maximum level. For lower leveled nodes, the use count
+is multiplied by 3^leveldiff.
+- uses=10, leveldiff=0 -> actual_uses=10
+- uses=10, leveldiff=1 -> actual_uses=30
+- uses=10, leveldiff=2 -> actual_uses=90
+
+**Maximum level**
+Tells what is the maximum level of a node of this group that the tool will
+be able to dig.
+
+**Digging times**
+List of digging times for different ratings of the group, for nodes of the
+maximum level.
+  * For example, as a lua table, ''times={2=2.00, 3=0.70}''. This would
+    result the tool to be able to dig nodes that have a rating of 2 or 3
+    for this group, and unable to dig the rating 1, which is the toughest.
+    Unless there is a matching group that enables digging otherwise.
+  * For entities, damage equals the amount of nodes dug in the time spent
+    between hits, with a maximum time of ''full_punch_interval''.
+
+Example definition of the capabilities of a tool
+-------------------------------------------------
 tool_capabilities = {
 	full_punch_interval=1.5,
 	max_drop_level=1,
 	groupcaps={
-		crumbly={maxwear=0.01, maxlevel=2, times={[1]=0.80, [2]=0.60, [3]=0.40}}
+		crumbly={maxlevel=2, uses=20, times={[1]=1.60, [2]=1.20, [3]=0.80}}
 	}
 }
 
-**Tools define:**
-  * Full punch interval Maximum drop level For an arbitrary list of groups:
-  * Maximum level (usually 0, 1, 2 or 3) Maximum wear (0...1) Digging times
+This makes the tool be able to dig nodes that fullfill both of these:
+- Have the **crumbly** group
+- Have a **level** group less or equal to 2
 
-**Full punch interval**: When used as a weapon, the tool will do full
-damage if this time is spent between punches. If eg. half the time is
-spent, the tool will do half damage.
+Table of resulting digging times:
+crumbly        0     1     2     3     4  <- level
+     ->  0     -     -     -     -     -
+         1  0.80  1.60  1.60     -     -
+         2  0.60  1.20  1.20     -     -
+         3  0.40  0.80  0.80     -     -
 
-**Maximum drop level** suggests the maximum level of node, when dug with
-the tool, that will drop it's useful item. (eg. iron ore to drop a lump of
-iron).
+level diff:    2     1     0    -1    -2
 
-**Maximum level** tells what is the maximum level of a node of this group
-that the tool will be able to dig.
+Table of resulting tool uses:
+     ->  0     -     -     -     -     -
+         1   180    60    20     -     -
+         2   180    60    20     -     -
+         3   180    60    20     -     -
 
-**Maximum wear** determines how much the tool wears out when it is used for
-digging a node, of this group, of the maximum level. For lower leveled
-tools, the wear is divided by //4// to the exponent //level difference//.
-This means for a maximum wear of 0.1, a level difference 1 will result in
-wear=0.1/4=0.025, and a level difference of 2 will result in
-wear=0.1/(4*4)=0.00625.
-
-**Digging times** is basically a list of digging times for different
-ratings of the group. It also determines the damage done to entities, based
-on their "armor groups".
-  * For example, as a lua table, ''times={2=2.00, 3=0.70}''. This would
-  * result the tool to be able to dig nodes that have a rating of 2 or 3
-  * for this group, and unable to dig the rating 1, which is the toughest.
-  * Unless there is a matching group that enables digging otherwise.  For
-  * entities, damage equals the amount of nodes dug in the time spent
-  * between hits, with a maximum of ''full_punch_interval''.
+Notes:
+- At crumbly=0, the node is not diggable.
+- At crumbly=3, the level difference digging time divider kicks in and makes
+  easy nodes to be quickly breakable.
+- At level > 2, the node is not diggable, because it's level > maxlevel
 
 Entity damage mechanism
 ------------------------
+Damage calculation:
+- Take the time spent after the last hit
+- Limit time to full_punch_interval
+- Take the damage groups, assume a node has them
+- Damage in HP is the amount of nodes destroyed in this time.
+
 Client predicts damage based on damage groups. Because of this, it is able to
 give an immediate response when an entity is damaged or dies; the response is
 pre-defined somehow (eg. by defining a sprite animation) (not implemented;
 TODO).
+- Currently a smoke puff will appear when an entity dies.
 
 The group **immortal** will completely disable normal damage.
 
@@ -355,9 +464,25 @@ dump2(obj, name="_", dumped={})
 ^ Return object serialized as a string, handles reference loops
 dump(obj, dumped={})
 ^ Return object serialized as a string
+string:split(separator)
+string:trim()
 
 minetest namespace reference
 -----------------------------
+minetest.get_current_modname() -> string
+minetest.get_modpath(modname) -> eg. "/home/user/.minetest/usermods/modname"
+^ Useful for loading additional .lua modules or static data from mod
+minetest.get_worldpath() -> eg. "/home/user/.minetest/world"
+^ Useful for storing custom data
+minetest.is_singleplayer()
+
+minetest.debug(line)
+^ Goes to dstream
+minetest.log(line)
+minetest.log(loglevel, line)
+^ loglevel one of "error", "action", "info", "verbose"
+
+Registration functions: (Call these only at load time)
 minetest.register_entity(name, prototype table)
 minetest.register_abm(abm definition)
 minetest.register_node(name, node definition)
@@ -369,33 +494,54 @@ minetest.register_globalstep(func(dtime))
 minetest.register_on_placenode(func(pos, newnode, placer))
 minetest.register_on_dignode(func(pos, oldnode, digger))
 minetest.register_on_punchnode(func(pos, node, puncher))
-minetest.register_on_generated(func(minp, maxp))
+minetest.register_on_generated(func(minp, maxp, blockseed))
 minetest.register_on_newplayer(func(ObjectRef))
 minetest.register_on_dieplayer(func(ObjectRef))
 minetest.register_on_respawnplayer(func(ObjectRef))
 ^ return true in func to disable regular player placement
 ^ currently called _before_ repositioning of player occurs
 minetest.register_on_chat_message(func(name, message))
-minetest.add_to_creative_inventory(itemstring)
+minetest.register_chatcommand(cmd, chatcommand definition)
+minetest.register_privilege(name, description)
+minetest.register_authentication_handler(handler)
+^ See minetest.builtin_auth_handler in builtin.lua for reference
+
+Setting-related:
 minetest.setting_get(name) -> string or nil
 minetest.setting_getbool(name) -> boolean value or nil
+minetest.add_to_creative_inventory(itemstring)
+
+Authentication:
+minetest.get_password_hash(name, raw_password)
+minetest.set_player_password(name, password_hash)
+minetest.string_to_privs(str) -> {priv1=true,...}
+minetest.privs_to_string(privs) -> "priv1,priv2,..."
+minetest.set_player_privs(name, {priv1=true,...})
+minetest.get_player_privs(name) -> {priv1=true,...}
+minetest.check_player_privs(name, {priv1=true,...}) -> bool, missing_privs
+
+Chat:
 minetest.chat_send_all(text)
 minetest.chat_send_player(name, text)
-minetest.get_player_privs(name) -> set of privs
+
+Inventory:
 minetest.get_inventory(location) -> InvRef
 ^ location = eg. {type="player", name="celeron55"}
                  {type="node", pos={x=, y=, z=}}
-minetest.get_current_modname() -> string
-minetest.get_modpath(modname) -> eg. "/home/user/.minetest/usermods/modname"
-^ Useful for loading additional .lua modules or static data from mod
-minetest.get_worldpath(modname) -> eg. "/home/user/.minetest/world"
-^ Useful for storing custom data
 
-minetest.debug(line)
-^ Goes to dstream
-minetest.log(line)
-minetest.log(loglevel, line)
-^ loglevel one of "error", "action", "info", "verbose"
+Sounds:
+minetest.sound_play(spec, parameters) -> handle
+^ spec = SimpleSoundSpec
+^ parameters = sound parameter table
+minetest.sound_stop(handle)
+
+Timing:
+minetest.after(time, func, param)
+^ Call function after time seconds
+^ param is optional; to pass multiple parameters, pass a table.
+
+Random:
+minetest.get_connected_players() -> list of ObjectRefs
 
 Global objects:
 minetest.env - environment reference
@@ -429,8 +575,9 @@ Class reference
 ----------------
 EnvRef: basically ServerEnvironment and ServerMap combined.
 methods:
-- add_node(pos, node)
-- remove_node(pos)
+- set_node(pos, node)
+- add_node(pos, node): alias set_node(pos, node)
+- remove_node(pos): equivalent to set_node(pos, "air")
 - get_node(pos)
   ^ Returns {name="ignore", ...} for unloaded area
 - get_node_or_nil(pos)
@@ -487,6 +634,8 @@ methods:
 - get_wield_index(): returns the index of the wielded item
 - get_wielded_item() -> ItemStack
 - set_wielded_item(item): replaces the wielded item, returns true if successful
+- set_armor_groups({group1=rating, group2=rating, ...})
+- set_properties(object property table)
 LuaEntitySAO-only: (no-op for other objects)
 - setvelocity({x=num, y=num, z=num})
 - getvelocity() -> {x=num, y=num, z=num}
@@ -499,7 +648,6 @@ LuaEntitySAO-only: (no-op for other objects)
 -           select_horiz_by_yawpitch=false)
 - ^ Select sprite from spritesheet with optional animation and DM-style
 -   texture selection based on yaw relative to camera
-- set_armor_groups({group1=rating, group2=rating, ...})
 - get_entity_name() (DEPRECATED: Will be removed in a future version)
 - get_luaentity()
 Player-only: (no-op for other objects)
@@ -525,6 +673,7 @@ methods:
     returns the items that were actually removed (as an ItemStack)
 
 ItemStack: A stack of items.
+- Can be created via ItemStack(itemstack or itemstring or table or nil)
 methods:
 - is_empty(): return true if stack is empty
 - get_name(): returns item name (e.g. "default:stone")
@@ -552,6 +701,14 @@ methods:
 - peek_item(n): copy (don't remove) up to n items from this stack
   ^ returns copied ItemStack
   ^ if n is omitted, n=1 is used
+
+PseudoRandom: A pseudorandom number generator
+- Can be created via PseudoRandom(seed)
+methods:
+- next(): return next integer random number [0...32767]
+- next(min, max): return next integer random number [min...max]
+                  (max - min) must be 32767 or <= 6553 due to the simple
+                  implementation making bad distribution otherwise.
 
 Registered entities
 --------------------
@@ -581,20 +738,30 @@ Registered entities
 Definition tables
 ------------------
 
-Entity definition (register_entity)
+Object Properties
 {
     physical = true,
     collisionbox = {-0.5,-0.5,-0.5, 0.5,0.5,0.5},
-    visual = "cube"/"sprite",
+    visual = "cube"/"sprite"/"upright_sprite",
     visual_size = {x=1, y=1},
-    textures = {texture,texture,texture,texture,texture,texture},
+    textures = {}, -- number of required textures depends on visual
     spritediv = {x=1, y=1},
     initial_sprite_basepos = {x=0, y=0},
+    is_visible = true,
+    makes_footstep_sound = false,
+}
+
+Entity definition (register_entity)
+{
+    Everything from object properties,
+    -- entity specific --
     on_activate = function(self, staticdata),
     on_step = function(self, dtime),
     on_punch = function(self, hitter),
     on_rightclick = function(self, clicker),
     get_staticdata = function(self),
+    ^ Called sometimes; the string returned is passed to on_activate when
+      the entity is re-activated from static state
     # Also you can define arbitrary member variables here
     myvariable = whatever,
 }
@@ -672,6 +839,11 @@ Node definition (register_node)
     selection_box = {type="regular"},
     legacy_facedir_simple = false, -- Support maps made in and before January 2012
     legacy_wallmounted = false, -- Support maps made in and before January 2012
+    sounds = {
+        footstep = <SimpleSoundSpec>,
+        dig = <SimpleSoundSpec>, -- "__group" = group-based sound (default)
+        dug = <SimpleSoundSpec>,
+    },
 }
 
 Recipe: (register_craft)
@@ -720,4 +892,11 @@ Recipe (furnace fuel):
     burntime = 1,
 }
 
+Chatcommand definition (register_chatcommand)
+{
+    params = "<name> <privilege>", -- short parameter description
+    description = "Remove privilege from player", -- full description
+    privs = {privs=true}}, -- require the "privs" privilege to run
+    func = function(name, param), -- called when command is run
+}
 

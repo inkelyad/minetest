@@ -36,12 +36,12 @@ namespace mapgen
 	// Find out if block is completely underground
 	bool block_is_underground(u64 seed, v3s16 blockpos);
 
+	// Get a pseudorandom seed for a position on the map
+	u32 get_blockseed(u64 seed, v3s16 p);
+
 	// Main map generation routine
 	void make_block(BlockMakeData *data);
 	
-	// Add objects according to block content
-	void add_random_objects(MapBlock *block);
-
 	// Add a tree
 	void make_tree(ManualMapVoxelManipulator &vmanip, v3s16 p0,
 			bool is_apple_tree, INodeDefManager *ndef);
@@ -49,16 +49,17 @@ namespace mapgen
 	/*
 		These are used by FarMesh
 	*/
-	bool get_have_sand(u64 seed, v2s16 p2d);
+	bool get_have_beach(u64 seed, v2s16 p2d);
 	double tree_amount_2d(u64 seed, v2s16 p);
-	
 
 	struct BlockMakeData
 	{
 		bool no_op;
 		ManualMapVoxelManipulator *vmanip; // Destructor deletes
 		u64 seed;
-		v3s16 blockpos;
+		v3s16 blockpos_min;
+		v3s16 blockpos_max;
+		v3s16 blockpos_requested;
 		UniqueQueue<v3s16> transforming_liquid;
 		INodeDefManager *nodedef;
 

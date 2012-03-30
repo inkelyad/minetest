@@ -38,17 +38,21 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "sha1.h"
 #include "base64.h"
 #include "clientmap.h"
+#include "filecache.h"
+#include "sound.h"
+#include "utility_string.h"
+#include "hex.h"
 
-static std::string getTextureCacheDir()
+static std::string getMediaCacheDir()
 {
-	return porting::path_user + DIR_DELIM + "cache" + DIR_DELIM + "textures";
+	return porting::path_user + DIR_DELIM + "cache" + DIR_DELIM + "media";
 }
 
-struct TextureRequest
+struct MediaRequest
 {
 	std::string name;
 
-	TextureRequest(const std::string &name_=""):
+	MediaRequest(const std::string &name_=""):
 		name(name_)
 	{}
 };
@@ -224,11 +228,15 @@ Client::Client(
 		MapDrawControl &control,
 		IWritableTextureSource *tsrc,
 		IWritableItemDefManager *itemdef,
-		IWritableNodeDefManager *nodedef
+		IWritableNodeDefManager *nodedef,
+		ISoundManager *sound,
+		MtEventManager *event
 ):
 	m_tsrc(tsrc),
 	m_itemdef(itemdef),
 	m_nodedef(nodedef),
+	m_sound(sound),
+	m_event(event),
 	m_mesh_update_thread(this),
 	m_env(
 		new ClientMap(this, this, control,
@@ -250,13 +258,15 @@ Client::Client(
 	m_map_seed(0),
 	m_password(password),
 	m_access_denied(false),
-	m_texture_receive_progress(0),
-	m_textures_received(false),
+	m_media_cache(getMediaCacheDir()),
+	m_media_receive_progress(0),
+	m_media_received(false),
 	m_itemdef_received(false),
 	m_nodedef_received(false),
 	m_time_of_day_set(false),
 	m_last_time_of_day_f(-1),
-	m_time_of_day_update_timer(0)
+	m_time_of_day_update_timer(0),
+	m_removed_sounds_check_timer(0)
 {
 	m_packetcounter_timer = 0.0;
 	//m_delete_unused_sectors_timer = 0.0;
@@ -728,6 +738,123 @@ void Client::step(float dtime)
 			m_inventory_updated = true;
 		}
 	}
+
+	/*
+		Update positions of sounds attached to objects
+	*/
+	{
+		for(std::map<int, u16>::iterator
+				i = m_sounds_to_objects.begin();
+				i != m_sounds_to_objects.end(); i++)
+		{
+			int client_id = i->first;
+			u16 object_id = i->second;
+			ClientActiveObject *cao = m_env.getActiveObject(object_id);
+			if(!cao)
+				continue;
+			v3f pos = cao->getPosition();
+			m_sound->updateSoundPosition(client_id, pos);
+		}
+	}
+	
+	/*
+		Handle removed remotely initiated sounds
+	*/
+	m_removed_sounds_check_timer += dtime;
+	if(m_removed_sounds_check_timer >= 2.32)
+	{
+		m_removed_sounds_check_timer = 0;
+		// Find removed sounds and clear references to them
+		std::set<s32> removed_server_ids;
+		for(std::map<s32, int>::iterator
+				i = m_sounds_server_to_client.begin();
+				i != m_sounds_server_to_client.end();)
+		{
+			s32 server_id = i->first;
+			int client_id = i->second;
+			i++;
+			if(!m_sound->soundExists(client_id)){
+				m_sounds_server_to_client.erase(server_id);
+				m_sounds_client_to_server.erase(client_id);
+				m_sounds_to_objects.erase(client_id);
+				removed_server_ids.insert(server_id);
+			}
+		}
+		// Sync to server
+		if(removed_server_ids.size() != 0)
+		{
+			std::ostringstream os(std::ios_base::binary);
+			writeU16(os, TOSERVER_REMOVED_SOUNDS);
+			writeU16(os, removed_server_ids.size());
+			for(std::set<s32>::iterator i = removed_server_ids.begin();
+					i != removed_server_ids.end(); i++)
+				writeS32(os, *i);
+			std::string s = os.str();
+			SharedBuffer<u8> data((u8*)s.c_str(), s.size());
+			// Send as reliable
+			Send(0, data, true);
+		}
+	}
+}
+
+bool Client::loadMedia(const std::string &data, const std::string &filename)
+{
+	// Silly irrlicht's const-incorrectness
+	Buffer<char> data_rw(data.c_str(), data.size());
+	
+	std::string name;
+
+	const char *image_ext[] = {
+		".png", ".jpg", ".bmp", ".tga",
+		".pcx", ".ppm", ".psd", ".wal", ".rgb",
+		NULL
+	};
+	name = removeStringEnd(filename, image_ext);
+	if(name != "")
+	{
+		verbosestream<<"Client: Attempting to load image "
+				<<"file \""<<filename<<"\""<<std::endl;
+
+		io::IFileSystem *irrfs = m_device->getFileSystem();
+		video::IVideoDriver *vdrv = m_device->getVideoDriver();
+
+		// Create an irrlicht memory file
+		io::IReadFile *rfile = irrfs->createMemoryReadFile(
+				*data_rw, data_rw.getSize(), "_tempreadfile");
+		assert(rfile);
+		// Read image
+		video::IImage *img = vdrv->createImageFromFile(rfile);
+		if(!img){
+			errorstream<<"Client: Cannot create image from data of "
+					<<"file \""<<filename<<"\""<<std::endl;
+			rfile->drop();
+			return false;
+		}
+		else {
+			m_tsrc->insertSourceImage(filename, img);
+			img->drop();
+			rfile->drop();
+			return true;
+		}
+	}
+
+	const char *sound_ext[] = {
+		".0.ogg", ".1.ogg", ".2.ogg", ".3.ogg", ".4.ogg",
+		".5.ogg", ".6.ogg", ".7.ogg", ".8.ogg", ".9.ogg",
+		".ogg", NULL
+	};
+	name = removeStringEnd(filename, sound_ext);
+	if(name != "")
+	{
+		verbosestream<<"Client: Attempting to load sound "
+				<<"file \""<<filename<<"\""<<std::endl;
+		m_sound->loadSoundData(name, data);
+		return true;
+	}
+
+	errorstream<<"Client: Don't know how to load file \""
+			<<filename<<"\""<<std::endl;
+	return false;
 }
 
 // Virtual methods from con::PeerHandler
@@ -1270,45 +1397,7 @@ void Client::ProcessData(u8 *data, u32 datasize, u16 sender_peer_id)
 	}
 	else if(command == TOCLIENT_PLAYERITEM)
 	{
-		std::string datastring((char*)&data[2], datasize-2);
-		std::istringstream is(datastring, std::ios_base::binary);
-
-		u16 count = readU16(is);
-
-		for (u16 i = 0; i < count; ++i) {
-			u16 peer_id = readU16(is);
-			Player *player = m_env.getPlayer(peer_id);
-
-			if (player == NULL)
-			{
-				infostream<<"Client: ignoring player item "
-					<< deSerializeString(is)
-					<< " for non-existing peer id " << peer_id
-					<< std::endl;
-				continue;
-			} else if (player->isLocal()) {
-				infostream<<"Client: ignoring player item "
-					<< deSerializeString(is)
-					<< " for local player" << std::endl;
-				continue;
-			} else {
-				InventoryList *inv = player->inventory.getList("main");
-				std::string itemstring(deSerializeString(is));
-				ItemStack item;
-				item.deSerialize(itemstring, m_itemdef);
-				inv->changeItem(0, item);
-				if(itemstring.empty())
-				{
-					infostream<<"Client: empty player item for peer "
-						<<peer_id<<std::endl;
-				}
-				else
-				{
-					infostream<<"Client: player item for peer "
-						<<peer_id<<": "<<itemstring<<std::endl;
-				}
-			}
-		}
+		infostream<<"Client: WARNING: Ignoring TOCLIENT_PLAYERITEM"<<std::endl;
 	}
 	else if(command == TOCLIENT_DEATHSCREEN)
 	{
@@ -1326,11 +1415,8 @@ void Client::ProcessData(u8 *data, u32 datasize, u16 sender_peer_id)
 		event.deathscreen.camera_point_target_z = camera_point_target.Z;
 		m_client_event_queue.push_back(event);
 	}
-	else if(command == TOCLIENT_ANNOUNCE_TEXTURES)
+	else if(command == TOCLIENT_ANNOUNCE_MEDIA)
 	{
-		io::IFileSystem *irrfs = m_device->getFileSystem();
-		video::IVideoDriver *vdrv = m_device->getVideoDriver();
-
 		std::string datastring((char*)&data[2], datasize-2);
 		std::istringstream is(datastring, std::ios_base::binary);
 
@@ -1338,132 +1424,69 @@ void Client::ProcessData(u8 *data, u32 datasize, u16 sender_peer_id)
 		// updating content definitions
 		assert(!m_mesh_update_thread.IsRunning());
 
-		int num_textures = readU16(is);
+		int num_files = readU16(is);
+		
+		verbosestream<<"Client received TOCLIENT_ANNOUNCE_MEDIA ("
+				<<num_files<<" files)"<<std::endl;
 
-		core::list<TextureRequest> texture_requests;
+		core::list<MediaRequest> file_requests;
 
-		for(int i=0; i<num_textures; i++){
-
-			bool texture_found = false;
-
-			//read texture from cache
+		for(int i=0; i<num_files; i++)
+		{
+			//read file from cache
 			std::string name = deSerializeString(is);
-			std::string sha1_texture = deSerializeString(is);
-			
-			// if name contains illegal characters, ignore the texture
+			std::string sha1_base64 = deSerializeString(is);
+
+			// if name contains illegal characters, ignore the file
 			if(!string_allowed(name, TEXTURENAME_ALLOWED_CHARS)){
-				errorstream<<"Client: ignoring illegal texture name "
+				errorstream<<"Client: ignoring illegal file name "
 						<<"sent by server: \""<<name<<"\""<<std::endl;
 				continue;
 			}
 
-			std::string tpath = getTextureCacheDir() + DIR_DELIM + name;
-			// Read data
-			std::ifstream fis(tpath.c_str(), std::ios_base::binary);
+			std::string sha1_raw = base64_decode(sha1_base64);
+			std::string sha1_hex = hex_encode(sha1_raw);
+			std::ostringstream tmp_os(std::ios_base::binary);
+			bool found_in_cache = m_media_cache.load_sha1(sha1_raw, tmp_os);
+			m_media_name_sha1_map.set(name, sha1_raw);
 
-
-			if(fis.good() == false){
-				infostream<<"Client::Texture not found in cache: "
-						<<name << " expected it at: "<<tpath<<std::endl;
-			}
-			else
+			// If found in cache, try to load it from there
+			if(found_in_cache)
 			{
-				std::ostringstream tmp_os(std::ios_base::binary);
-				bool bad = false;
-				for(;;){
-					char buf[1024];
-					fis.read(buf, 1024);
-					std::streamsize len = fis.gcount();
-					tmp_os.write(buf, len);
-					if(fis.eof())
-						break;
-					if(!fis.good()){
-						bad = true;
-						break;
-					}
-				}
-				if(bad){
-					infostream<<"Client: Failed to read texture from cache\""
-							<<name<<"\""<<std::endl;
-				}
-				else {
-
-					SHA1 sha1;
-					sha1.addBytes(tmp_os.str().c_str(), tmp_os.str().length());
-
-					unsigned char *digest = sha1.getDigest();
-
-					std::string digest_string = base64_encode(digest, 20);
-
-					if (digest_string == sha1_texture) {
-						// Silly irrlicht's const-incorrectness
-						Buffer<char> data_rw(tmp_os.str().c_str(), tmp_os.str().size());
-
-						// Create an irrlicht memory file
-						io::IReadFile *rfile = irrfs->createMemoryReadFile(
-								*data_rw,  tmp_os.str().size(), "_tempreadfile");
-						assert(rfile);
-						// Read image
-						video::IImage *img = vdrv->createImageFromFile(rfile);
-						if(!img){
-							infostream<<"Client: Cannot create image from data of "
-									<<"received texture \""<<name<<"\""<<std::endl;
-							rfile->drop();
-						}
-						else {
-							m_tsrc->insertSourceImage(name, img);
-							img->drop();
-							rfile->drop();
-
-							texture_found = true;
-						}
-					}
-					else {
-						infostream<<"Client::Texture cached sha1 hash not matching server hash: "
-								<<name << ": server ->"<<sha1_texture <<" client -> "<<digest_string<<std::endl;
-					}
-
-					free(digest);
+				bool success = loadMedia(tmp_os.str(), name);
+				if(success){
+					verbosestream<<"Client: Loaded cached media: "
+							<<sha1_hex<<" \""<<name<<"\""<<std::endl;
+					continue;
+				} else{
+					infostream<<"Client: Failed to load cached media: "
+							<<sha1_hex<<" \""<<name<<"\""<<std::endl;
 				}
 			}
-
-			//add texture request
-			if (!texture_found) {
-				infostream<<"Client: Adding texture to request list: \""
-						<<name<<"\""<<std::endl;
-				texture_requests.push_back(TextureRequest(name));
-			}
-
+			// Didn't load from cache; queue it to be requested
+			verbosestream<<"Client: Adding file to request list: \""
+					<<sha1_hex<<" \""<<name<<"\""<<std::endl;
+			file_requests.push_back(MediaRequest(name));
 		}
 
 		ClientEvent event;
 		event.type = CE_TEXTURES_UPDATED;
 		m_client_event_queue.push_back(event);
 
-
-		//send Texture request
 		/*
-				u16 command
-				u16 number of textures requested
-				for each texture {
-					u16 length of name
-					string name
-				}
-		 */
+			u16 command
+			u16 number of files requested
+			for each file {
+				u16 length of name
+				string name
+			}
+		*/
 		std::ostringstream os(std::ios_base::binary);
-		u8 buf[12];
+		writeU16(os, TOSERVER_REQUEST_MEDIA);
+		writeU16(os, file_requests.size());
 
-
-		// Write command
-		writeU16(buf, TOSERVER_REQUEST_TEXTURES);
-		os.write((char*)buf, 2);
-
-		writeU16(buf,texture_requests.size());
-		os.write((char*)buf, 2);
-
-
-		for(core::list<TextureRequest>::Iterator i = texture_requests.begin();
-				i != texture_requests.end(); i++) {
+		for(core::list<MediaRequest>::Iterator i = file_requests.begin();
+				i != file_requests.end(); i++) {
 			os<<serializeString(i->name);
 		}
 
@@ -1472,13 +1495,11 @@ void Client::ProcessData(u8 *data, u32 datasize, u16 sender_peer_id)
 		SharedBuffer<u8> data((u8*)s.c_str(), s.size());
 		// Send as reliable
 		Send(0, data, true);
-		infostream<<"Client: Sending request list to server " <<std::endl;
+		infostream<<"Client: Sending media request list to server ("
+				<<file_requests.size()<<" files)"<<std::endl;
 	}
-	else if(command == TOCLIENT_TEXTURES)
+	else if(command == TOCLIENT_MEDIA)
 	{
-		io::IFileSystem *irrfs = m_device->getFileSystem();
-		video::IVideoDriver *vdrv = m_device->getVideoDriver();
-
 		std::string datastring((char*)&data[2], datasize-2);
 		std::istringstream is(datastring, std::ios_base::binary);
 
@@ -1488,10 +1509,10 @@ void Client::ProcessData(u8 *data, u32 datasize, u16 sender_peer_id)
 
 		/*
 			u16 command
-			u16 total number of texture bunches
+			u16 total number of file bunches
 			u16 index of this bunch
-			u32 number of textures in this bunch
-			for each texture {
+			u32 number of files in this bunch
+			for each file {
 				u16 length of name
 				string name
 				u32 length of data
@@ -1500,55 +1521,52 @@ void Client::ProcessData(u8 *data, u32 datasize, u16 sender_peer_id)
 		*/
 		int num_bunches = readU16(is);
 		int bunch_i = readU16(is);
-		m_texture_receive_progress = (float)bunch_i / (float)(num_bunches - 1);
+		if(num_bunches >= 2)
+			m_media_receive_progress = (float)bunch_i / (float)(num_bunches - 1);
+		else
+			m_media_receive_progress = 1.0;
 		if(bunch_i == num_bunches - 1)
-			m_textures_received = true;
-		int num_textures = readU32(is);
-		infostream<<"Client: Received textures: bunch "<<bunch_i<<"/"
-				<<num_bunches<<" textures="<<num_textures
+			m_media_received = true;
+		int num_files = readU32(is);
+		infostream<<"Client: Received files: bunch "<<bunch_i<<"/"
+				<<num_bunches<<" files="<<num_files
 				<<" size="<<datasize<<std::endl;
-		for(int i=0; i<num_textures; i++){
+		for(int i=0; i<num_files; i++){
 			std::string name = deSerializeString(is);
 			std::string data = deSerializeLongString(is);
 
-			// if name contains illegal characters, ignore the texture
+			// if name contains illegal characters, ignore the file
 			if(!string_allowed(name, TEXTURENAME_ALLOWED_CHARS)){
-				errorstream<<"Client: ignoring illegal texture name "
+				errorstream<<"Client: ignoring illegal file name "
 						<<"sent by server: \""<<name<<"\""<<std::endl;
 				continue;
 			}
-
-			// Silly irrlicht's const-incorrectness
-			Buffer<char> data_rw(data.c_str(), data.size());
-			// Create an irrlicht memory file
-			io::IReadFile *rfile = irrfs->createMemoryReadFile(
-					*data_rw, data.size(), "_tempreadfile");
-			assert(rfile);
-			// Read image
-			video::IImage *img = vdrv->createImageFromFile(rfile);
-			if(!img){
-				errorstream<<"Client: Cannot create image from data of "
-						<<"received texture \""<<name<<"\""<<std::endl;
-				rfile->drop();
+			
+			bool success = loadMedia(data, name);
+			if(success){
+				verbosestream<<"Client: Loaded received media: "
+						<<"\""<<name<<"\". Caching."<<std::endl;
+			} else{
+				infostream<<"Client: Failed to load received media: "
+						<<"\""<<name<<"\". Not caching."<<std::endl;
 				continue;
 			}
 
-			fs::CreateAllDirs(getTextureCacheDir());
-
-			std::string filename = getTextureCacheDir() + DIR_DELIM + name;
-			std::ofstream outfile(filename.c_str(), std::ios_base::binary | std::ios_base::trunc);
-
-			if (outfile.good()) {
-				outfile.write(data.c_str(),data.length());
-				outfile.close();
-			}
-			else {
-				errorstream<<"Client: Unable to open cached texture file "<< filename <<std::endl;
+			bool did = fs::CreateAllDirs(getMediaCacheDir());
+			if(!did){
+				errorstream<<"Could not create media cache directory"
+						<<std::endl;
 			}
 
-			m_tsrc->insertSourceImage(name, img);
-			img->drop();
-			rfile->drop();
+			{
+				core::map<std::string, std::string>::Node *n;
+				n = m_media_name_sha1_map.find(name);
+				if(n == NULL)
+					errorstream<<"The server sent a file that has not "
+							<<"been announced."<<std::endl;
+				else
+					m_media_cache.update_sha1(data);
+			}
 		}
 
 		ClientEvent event;
@@ -1604,6 +1622,57 @@ void Client::ProcessData(u8 *data, u32 datasize, u16 sender_peer_id)
 		std::istringstream tmp_is2(tmp_os.str());
 		m_itemdef->deSerialize(tmp_is2);
 		m_itemdef_received = true;
+	}
+	else if(command == TOCLIENT_PLAY_SOUND)
+	{
+		std::string datastring((char*)&data[2], datasize-2);
+		std::istringstream is(datastring, std::ios_base::binary);
+
+		s32 server_id = readS32(is);
+		std::string name = deSerializeString(is);
+		float gain = readF1000(is);
+		int type = readU8(is); // 0=local, 1=positional, 2=object
+		v3f pos = readV3F1000(is);
+		u16 object_id = readU16(is);
+		bool loop = readU8(is);
+		// Start playing
+		int client_id = -1;
+		switch(type){
+		case 0: // local
+			client_id = m_sound->playSound(name, false, gain);
+			break;
+		case 1: // positional
+			client_id = m_sound->playSoundAt(name, false, gain, pos);
+			break;
+		case 2: { // object
+			ClientActiveObject *cao = m_env.getActiveObject(object_id);
+			if(cao)
+				pos = cao->getPosition();
+			client_id = m_sound->playSoundAt(name, loop, gain, pos);
+			// TODO: Set up sound to move with object
+			break; }
+		default:
+			break;
+		}
+		if(client_id != -1){
+			m_sounds_server_to_client[server_id] = client_id;
+			m_sounds_client_to_server[client_id] = server_id;
+			if(object_id != 0)
+				m_sounds_to_objects[client_id] = object_id;
+		}
+	}
+	else if(command == TOCLIENT_STOP_SOUND)
+	{
+		std::string datastring((char*)&data[2], datasize-2);
+		std::istringstream is(datastring, std::ios_base::binary);
+
+		s32 server_id = readS32(is);
+		std::map<s32, int>::iterator i =
+				m_sounds_server_to_client.find(server_id);
+		if(i != m_sounds_server_to_client.end()){
+			int client_id = i->second;
+			m_sound->stopSound(client_id);
+		}
 	}
 	else
 	{
@@ -2266,7 +2335,11 @@ void Client::afterContentReceived()
 {
 	assert(m_itemdef_received);
 	assert(m_nodedef_received);
-	assert(m_textures_received);
+	assert(m_media_received);
+
+	// remove the information about which checksum each texture
+	// ought to have
+	m_media_name_sha1_map.clear();
 
 	// Rebuild inherited images and recreate textures
 	m_tsrc->rebuildImagesAndTextures();
@@ -2322,5 +2395,13 @@ u16 Client::allocateUnknownNodeId(const std::string &name)
 			<<"Client cannot allocate node IDs"<<std::endl;
 	assert(0);
 	return CONTENT_IGNORE;
+}
+ISoundManager* Client::getSoundManager()
+{
+	return m_sound;
+}
+MtEventManager* Client::getEventManager()
+{
+	return m_event;
 }
 

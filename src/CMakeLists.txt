@@ -5,13 +5,22 @@ if(RUN_IN_PLACE)
 	add_definitions ( -DRUN_IN_PLACE )
 endif(RUN_IN_PLACE)
 
+# Set some random things default to not being visible in the GUI
+mark_as_advanced(EXECUTABLE_OUTPUT_PATH LIBRARY_OUTPUT_PATH)
+mark_as_advanced(JTHREAD_INCLUDE_DIR JTHREAD_LIBRARY)
+mark_as_advanced(SQLITE3_INCLUDE_DIR SQLITE3_LIBRARY)
+
 # user-visible option to enable/disable gettext usage
-OPTION(ENABLE_GETTEXT "Use GetText for internationalization" ON)
+OPTION(ENABLE_GETTEXT "Use GetText for internationalization" 0)
 
 # this is only set to 1 if gettext is enabled _and_ available
 set(USE_GETTEXT 0)
 
-find_package(GettextLib)
+if(ENABLE_GETTEXT)
+	find_package(GettextLib)
+else()
+	MARK_AS_ADVANCED(GETTEXT_ICONV_DLL GETTEXT_INCLUDE_DIR GETTEXT_LIBRARY GETTEXT_MSGFMT)
+endif()
 
 if(GETTEXT_FOUND AND ENABLE_GETTEXT)
 	message(STATUS "gettext include path: ${GETTEXT_INCLUDE_DIR}")
@@ -28,6 +37,50 @@ elseif(GETTEXT_FOUND AND NOT ENABLE_GETTEXT)
 else(GETTEXT_FOUND AND ENABLE_GETTEXT)
 	message(STATUS "GetText disabled")
 endif(GETTEXT_FOUND AND ENABLE_GETTEXT)
+
+# user visible option to enable/disable sound
+OPTION(ENABLE_SOUND "Enable sound" ON)
+
+# this is only set to 1 if sound is enabled _and_ available
+set(USE_SOUND 0)
+set(SOUND_PROBLEM 0)
+
+if(ENABLE_SOUND AND BUILD_CLIENT)
+	# Sound libraries
+	find_package(OpenAL)
+	find_package(Vorbis)
+	if(NOT OPENAL_FOUND)
+		message(STATUS "Sound enabled, but OpenAL not found!")
+		set(SOUND_PROBLEM 1)
+		MARK_AS_ADVANCED(CLEAR OPENAL_LIBRARY OPENAL_INCLUDE_DIR)
+	endif()
+	if(NOT VORBIS_FOUND)
+		message(STATUS "Sound enabled, but Vorbis libraries not found!")
+		set(SOUND_PROBLEM 1)
+		MARK_AS_ADVANCED(CLEAR OGG_INCLUDE_DIR VORBIS_INCLUDE_DIR OGG_LIBRARY VORBIS_LIBRARY VORBISFILE_LIBRARY)
+	endif()
+	if(OPENAL_FOUND AND VORBIS_FOUND)
+		set(USE_SOUND 1)
+		message(STATUS "Sound enabled")
+	endif()
+endif(ENABLE_SOUND AND BUILD_CLIENT)
+
+if(SOUND_PROBLEM)
+	message(FATAL_ERROR "Sound enabled, but cannot be used.\n"
+		"To continue, either fill in the required paths or disable sound.")
+endif()
+if(USE_SOUND)
+	set(sound_SRCS sound_openal.cpp)
+	set(SOUND_INCLUDE_DIRS
+		${OPENAL_INCLUDE_DIR}
+		${VORBIS_INCLUDE_DIR}
+		${OGG_INCLUDE_DIR}
+		)
+	set(SOUND_LIBRARIES
+		${OPENAL_LIBRARY}
+		${VORBIS_LIBRARIES}
+		)
+endif()
 
 if(NOT MSVC)
 	set(USE_GPROF 0 CACHE BOOL "Use -pg flag for g++")
@@ -53,6 +106,12 @@ if(WIN32)
 			CACHE FILEPATH "Path to zlibwapi.dll (for installation)")
 	set(IRRLICHT_SOURCE_DIR "${PROJECT_SOURCE_DIR}/../../irrlicht-1.7.2"
 			CACHE PATH "irrlicht dir")
+	if(ENABLE_SOUND)
+		set(OPENAL_DLL "" CACHE FILEPATH "Path to OpenAL32.dll for installation (optional)")
+		set(OGG_DLL "" CACHE FILEPATH "Path to libogg.dll for installation (optional)")
+		set(VORBIS_DLL "" CACHE FILEPATH "Path to libvorbis.dll for installation (optional)")
+		set(VORBISFILE_DLL "" CACHE FILEPATH "Path to libvorbisfile.dll for installation (optional)")
+	endif()
 else()
 	# Unix probably
 	if(BUILD_CLIENT)
@@ -94,17 +153,19 @@ configure_file(
 )
 
 set(common_SRCS
+	genericobject.cpp
+	voxelalgorithms.cpp
+	sound.cpp
 	quicktune.cpp
 	subgame.cpp
 	inventorymanager.cpp
 	mods.cpp
-	serverremoteplayer.cpp
 	content_abm.cpp
 	craftdef.cpp
 	nameidmapping.cpp
 	itemdef.cpp
 	nodedef.cpp
-	luaentity_common.cpp
+	object_properties.cpp
 	scriptapi.cpp
 	script.cpp
 	log.cpp
@@ -112,7 +173,6 @@ set(common_SRCS
 	mapgen.cpp
 	content_nodemeta.cpp
 	content_mapnode.cpp
-	auth.cpp
 	collision.cpp
 	nodemetadata.cpp
 	serverobject.cpp
@@ -159,6 +219,7 @@ endif()
 # Client sources
 set(minetest_SRCS
 	${common_SRCS}
+	${sound_SRCS}
 	sky.cpp
 	clientmap.cpp
 	content_cso.cpp
@@ -184,6 +245,7 @@ set(minetest_SRCS
 	guiCreateWorld.cpp
 	guiConfirmMenu.cpp
 	client.cpp
+	filecache.cpp
 	tile.cpp
 	game.cpp
 	main.cpp
@@ -202,6 +264,7 @@ include_directories(
 	${CMAKE_BUILD_TYPE}
 	${PNG_INCLUDE_DIR}
 	${GETTEXT_INCLUDE_DIR}
+	${SOUND_INCLUDE_DIRS}
 	${JTHREAD_INCLUDE_DIR}
 	${SQLITE3_INCLUDE_DIR}
 	${LUA_INCLUDE_DIR}
@@ -221,6 +284,7 @@ if(BUILD_CLIENT)
 		${PNG_LIBRARIES}
 		${X11_LIBRARIES}
 		${GETTEXT_LIBRARY}
+		${SOUND_LIBRARIES}
 		${JTHREAD_LIBRARY}
 		${SQLITE3_LIBRARY}
 		${LUA_LIBRARY}
@@ -309,6 +373,25 @@ endif()
 #
 # Installation
 #
+if(WIN32)
+	if(DEFINED ZLIB_DLL)
+		install(FILES ${ZLIB_DLL} DESTINATION ${BINDIR})
+	endif()
+	if(USE_SOUND)
+		if(OPENAL_DLL)
+			install(FILES ${OPENAL_DLL} DESTINATION ${BINDIR})
+		endif()
+		if(OGG_DLL)
+			install(FILES ${OGG_DLL} DESTINATION ${BINDIR})
+		endif()
+		if(VORBIS_DLL)
+			install(FILES ${VORBIS_DLL} DESTINATION ${BINDIR})
+		endif()
+		if(VORBISFILE_DLL)
+			install(FILES ${VORBISFILE_DLL} DESTINATION ${BINDIR})
+		endif()
+	endif()
+endif()
 
 if(BUILD_CLIENT)
 	install(TARGETS ${PROJECT_NAME} DESTINATION ${BINDIR})
@@ -324,9 +407,6 @@ if(BUILD_CLIENT)
 	if(WIN32)
 		if(DEFINED IRRLICHT_DLL)
 			install(FILES ${IRRLICHT_DLL} DESTINATION ${BINDIR})
-		endif()
-		if(DEFINED ZLIB_DLL)
-			install(FILES ${ZLIB_DLL} DESTINATION ${BINDIR})
 		endif()
 		if(USE_GETTEXT)
 			if(DEFINED GETTEXT_DLL)

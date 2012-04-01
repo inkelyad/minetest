@@ -2194,13 +2194,13 @@ void Server::ProcessData(u8 *data, u32 datasize, u16 peer_id)
 		// Send node definitions
 		SendNodeDef(m_con, peer_id, m_nodedef);
 		
-		// Send texture announcement
+		// Send media announcement
 		sendMediaAnnouncement(peer_id);
 		
-		// Send player info to all players
-		//SendPlayerInfos();
-
-		// Send inventory to player
+		// Send privileges
+		SendPlayerPrivileges(peer_id);
+		
+		// Send inventory
 		UpdateCrafting(peer_id);
 		SendInventory(peer_id);
 		
@@ -3544,6 +3544,28 @@ void Server::SendMovePlayer(u16 peer_id)
 	m_con.Send(peer_id, 0, data, true);
 }
 
+void Server::SendPlayerPrivileges(u16 peer_id)
+{
+	Player *player = m_env->getPlayer(peer_id);
+	assert(player);
+	std::set<std::string> privs;
+	scriptapi_get_auth(m_lua, player->getName(), NULL, &privs);
+	
+	std::ostringstream os(std::ios_base::binary);
+	writeU16(os, TOCLIENT_PRIVILEGES);
+	writeU16(os, privs.size());
+	for(std::set<std::string>::const_iterator i = privs.begin();
+			i != privs.end(); i++){
+		os<<serializeString(*i);
+	}
+
+	// Make data buffer
+	std::string s = os.str();
+	SharedBuffer<u8> data((u8*)s.c_str(), s.size());
+	// Send as reliable
+	m_con.Send(peer_id, 0, data, true);
+}
+
 s32 Server::playSound(const SimpleSoundSpec &spec,
 		const ServerSoundParams &params)
 {
@@ -4286,6 +4308,26 @@ bool Server::checkPriv(const std::string &name, const std::string &priv)
 	return (privs.count(priv) != 0);
 }
 
+void Server::reportPrivsModified(const std::string &name)
+{
+	if(name == ""){
+		for(core::map<u16, RemoteClient*>::Iterator
+				i = m_clients.getIterator();
+				i.atEnd() == false; i++){
+			RemoteClient *client = i.getNode()->getValue();
+			Player *player = m_env->getPlayer(client->peer_id);
+			reportPrivsModified(player->getName());
+		}
+	} else {
+		Player *player = m_env->getPlayer(name.c_str());
+		if(!player)
+			return;
+		SendPlayerPrivileges(player->peer_id);
+		player->getPlayerSAO()->updatePrivileges(
+				getPlayerEffectivePrivs(name));
+	}
+}
+
 // Saves g_settings to configpath given at initialization
 void Server::saveConfig()
 {
@@ -4481,7 +4523,8 @@ PlayerSAO* Server::emergePlayer(const char *name, u16 peer_id)
 	/*
 		Create a new player active object
 	*/
-	PlayerSAO *playersao = new PlayerSAO(m_env, player, peer_id);
+	PlayerSAO *playersao = new PlayerSAO(m_env, player, peer_id,
+			getPlayerEffectivePrivs(player->getName()));
 
 	/* Add object to environment */
 	m_env->addActiveObject(playersao);

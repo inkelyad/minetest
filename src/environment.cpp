@@ -39,6 +39,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "gamedef.h"
 #ifndef SERVER
 #include "clientmap.h"
+#include "localplayer.h"
 #endif
 #include "daynightratio.h"
 
@@ -646,27 +647,30 @@ public:
 					= abm->getRequiredNeighbors();
 			for(std::set<std::string>::iterator
 					i = required_neighbors_s.begin();
-					i != required_neighbors_s.end(); i++){
-				content_t c = ndef->getId(*i);
-				if(c == CONTENT_IGNORE)
-					continue;
-				aabm.required_neighbors.insert(c);
+					i != required_neighbors_s.end(); i++)
+			{
+				ndef->getIds(*i, aabm.required_neighbors);
 			}
 			// Trigger contents
 			std::set<std::string> contents_s = abm->getTriggerContents();
 			for(std::set<std::string>::iterator
-					i = contents_s.begin(); i != contents_s.end(); i++){
-				content_t c = ndef->getId(*i);
-				if(c == CONTENT_IGNORE)
-					continue;
-				std::map<content_t, std::list<ActiveABM> >::iterator j;
-				j = m_aabms.find(c);
-				if(j == m_aabms.end()){
-					std::list<ActiveABM> aabmlist;
-					m_aabms[c] = aabmlist;
+					i = contents_s.begin(); i != contents_s.end(); i++)
+			{
+				std::set<content_t> ids;
+				ndef->getIds(*i, ids);
+				for(std::set<content_t>::const_iterator k = ids.begin();
+						k != ids.end(); k++)
+				{
+					content_t c = *k;
+					std::map<content_t, std::list<ActiveABM> >::iterator j;
 					j = m_aabms.find(c);
+					if(j == m_aabms.end()){
+						std::list<ActiveABM> aabmlist;
+						m_aabms[c] = aabmlist;
+						j = m_aabms.find(c);
+					}
+					j->second.push_back(aabm);
 				}
-				j->second.push_back(aabm);
 			}
 		}
 	}
@@ -1885,7 +1889,8 @@ void ClientEnvironment::step(float dtime)
 	stepTimeOfDay(dtime);
 
 	// Get some settings
-	bool free_move = g_settings->getBool("free_move");
+	bool fly_allowed = m_gamedef->checkLocalPrivilege("fly");
+	bool free_move = fly_allowed && g_settings->getBool("free_move");
 
 	// Get local player
 	LocalPlayer *lplayer = getLocalPlayer();

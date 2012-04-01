@@ -4001,6 +4001,16 @@ static int l_get_password_hash(lua_State *L)
 	return 1;
 }
 
+// notify_authentication_modified(name)
+static int l_notify_authentication_modified(lua_State *L)
+{
+	std::string name = "";
+	if(lua_isstring(L, 1))
+		name = lua_tostring(L, 1);
+	get_server(L)->reportPrivsModified(name);
+	return 0;
+}
+
 static const struct luaL_Reg minetest_f [] = {
 	{"debug", l_debug},
 	{"log", l_log},
@@ -4022,6 +4032,7 @@ static const struct luaL_Reg minetest_f [] = {
 	{"sound_stop", l_sound_stop},
 	{"is_singleplayer", l_is_singleplayer},
 	{"get_password_hash", l_get_password_hash},
+	{"notify_authentication_modified", l_notify_authentication_modified},
 	{NULL, NULL}
 };
 
@@ -4903,8 +4914,13 @@ void scriptapi_luaentity_get_properties(lua_State *L, u16 id,
 	// Set default values that differ from ObjectProperties defaults
 	prop->hp_max = 10;
 	
-	// Read stuff
+	// Deprecated: read object properties directly
 	read_object_properties(L, -1, prop);
+	
+	// Read initial_properties
+	lua_getfield(L, -1, "initial_properties");
+	read_object_properties(L, -1, prop);
+	lua_pop(L, 1);
 }
 
 void scriptapi_luaentity_step(lua_State *L, u16 id, float dtime)

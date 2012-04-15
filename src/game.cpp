@@ -955,10 +955,14 @@ void the_game(
 	ISoundManager *sound = NULL;
 	bool sound_is_dummy = false;
 #if USE_SOUND
-	infostream<<"Attempting to use OpenAL audio"<<std::endl;
-	sound = createOpenALSoundManager(&soundfetcher);
-	if(!sound)
-		infostream<<"Failed to initialize OpenAL audio"<<std::endl;
+	if(g_settings->getBool("enable_sound")){
+		infostream<<"Attempting to use OpenAL audio"<<std::endl;
+		sound = createOpenALSoundManager(&soundfetcher);
+		if(!sound)
+			infostream<<"Failed to initialize OpenAL audio"<<std::endl;
+	} else {
+		infostream<<"Sound disabled."<<std::endl;
+	}
 #endif
 	if(!sound){
 		infostream<<"Using dummy audio."<<std::endl;
@@ -2080,8 +2084,9 @@ void the_game(
 		// Update sound listener
 		sound->updateListener(camera.getCameraNode()->getPosition(),
 				v3f(0,0,0), // velocity
-				camera.getCameraNode()->getTarget(),
+				camera.getDirection(),
 				camera.getCameraNode()->getUpVector());
+		sound->setListenerGain(g_settings->getFloat("sound_volume"));
 
 		/*
 			Update sound maker
@@ -2600,11 +2605,12 @@ void the_game(
 			char temptext[300];
 			snprintf(temptext, 300,
 					"(% .1f, % .1f, % .1f)"
-					" (yaw = %.1f)",
+					" (yaw = %.1f) (seed = %lli)",
 					player_position.X/BS,
 					player_position.Y/BS,
 					player_position.Z/BS,
-					wrapDegrees_0_360(camera_yaw));
+					wrapDegrees_0_360(camera_yaw),
+					client.getMapSeed());
 
 			guitext2->setText(narrow_to_wide(temptext).c_str());
 			guitext2->setVisible(true);

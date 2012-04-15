@@ -79,30 +79,6 @@ void cmd_shutdown(std::wostringstream &os,
 	ctx->flags |= SEND_TO_OTHERS;
 }
 
-void cmd_setting(std::wostringstream &os,
-	ServerCommandContext *ctx)
-{
-	if(!ctx->server->checkPriv(ctx->player->getName(), "server"))
-	{
-		os<<L"-!- You don't have permission to do that";
-		return;
-	}
-
-	/*std::string confline = wide_to_narrow(
-			ctx->parms[1] + L" = " + ctx->params[2]);*/
-
-	std::string confline = wide_to_narrow(ctx->paramstring);
-	
-	actionstream<<ctx->player->getName()
-			<<" sets: "<<confline<<std::endl;
-
-	g_settings->parseConfigLine(confline);
-	
-	ctx->server->saveConfig();
-
-	os<< L"-!- Setting changed and configuration saved.";
-}
-
 void cmd_banunban(std::wostringstream &os, ServerCommandContext *ctx)
 {
 	if(!ctx->server->checkPriv(ctx->player->getName(), "ban"))
@@ -184,18 +160,17 @@ void cmd_clearobjects(std::wostringstream &os,
 
 std::wstring processServerCommand(ServerCommandContext *ctx)
 {
-
 	std::wostringstream os(std::ios_base::binary);
 	ctx->flags = SEND_TO_SENDER;	// Default, unless we change it.
 
-	if(ctx->parms[0] == L"status")
+	if(ctx->parms.size() == 0)
+		os<<L"-!- Empty command";
+	else if(ctx->parms[0] == L"status")
 		cmd_status(os, ctx);
 	else if(ctx->parms[0] == L"time")
 		cmd_time(os, ctx);
 	else if(ctx->parms[0] == L"shutdown")
 		cmd_shutdown(os, ctx);
-	else if(ctx->parms[0] == L"setting")
-		cmd_setting(os, ctx);
 	else if(ctx->parms[0] == L"ban" || ctx->parms[0] == L"unban")
 		cmd_banunban(os, ctx);
 	else if(ctx->parms[0] == L"me")

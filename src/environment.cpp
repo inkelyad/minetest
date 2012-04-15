@@ -633,13 +633,15 @@ public:
 				i->timer -= trigger_interval;
 				actual_interval = trigger_interval;
 			}
-			ActiveABM aabm;
-			aabm.abm = abm;
 			float intervals = actual_interval / trigger_interval;
+			if(intervals == 0)
+				continue;
 			float chance = abm->getTriggerChance();
 			if(chance == 0)
 				chance = 1;
-			aabm.chance = 1.0 / pow((float)1.0/chance, (float)intervals);
+			ActiveABM aabm;
+			aabm.abm = abm;
+			aabm.chance = chance / intervals;
 			if(aabm.chance == 0)
 				aabm.chance = 1;
 			// Trigger neighbors
@@ -1746,6 +1748,15 @@ void ServerEnvironment::deactivateFarObjects(bool force_delete)
 					force_delete = true;
 				} else {
 					u16 new_id = pending_delete ? id : 0;
+					// If static counterpart already exists, remove it first.
+					// This shouldn't happen, but happens rarely for some
+					// unknown reason. Unsuccessful attempts have been made to
+					// find said reason.
+					if(new_id && block->m_static_objects.m_active.find(new_id)){
+						infostream<<"ServerEnv: WARNING: Performing hack #83274"
+								<<std::endl;
+						block->m_static_objects.remove(new_id);
+					}
 					block->m_static_objects.insert(new_id, s_obj);
 					
 					// Only mark block as modified if data changed considerably

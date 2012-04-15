@@ -6,6 +6,7 @@
 
 experimental = {}
 
+--[[
 experimental.player_visual_index = 0
 function switch_player_visual()
 	for _, obj in pairs(minetest.get_connected_players()) do
@@ -19,6 +20,27 @@ function switch_player_visual()
 	minetest.after(1.0, switch_player_visual)
 end
 minetest.after(1.0, switch_player_visual)
+]]
+
+minetest.register_node("experimental:soundblock", {
+	tile_images = {"unknown_block.png", "default_tnt_bottom.png",
+			"default_tnt_side.png", "default_tnt_side.png",
+			"default_tnt_side.png", "default_tnt_side.png"},
+	inventory_image = minetest.inventorycube("unknown_block.png",
+			"default_tnt_side.png", "default_tnt_side.png"),
+	groups = {dig_immediate=3},
+})
+
+minetest.register_alias("sb", "experimental:soundblock")
+
+minetest.register_abm({
+	nodenames = {"experimental:soundblock"},
+	interval = 1,
+	chance = 1,
+	action = function(p0, node, _, _)
+		minetest.sound_play("default_grass_footstep", {pos=p0, gain=0.5})
+	end,
+})
 
 --[[
 stepsound = -1

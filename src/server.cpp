@@ -964,8 +964,7 @@ Server::Server(
 	}
 	
 	// Path to builtin.lua
-	std::string builtinpath = porting::path_share + DIR_DELIM + "builtin"
-			+ DIR_DELIM + "builtin.lua";
+	std::string builtinpath = getBuiltinLuaPath() + DIR_DELIM + "builtin.lua";
 
 	// Create world if it doesn't exist
 	if(!initializeWorld(m_path_world, m_gamespec.id))
@@ -2177,6 +2176,12 @@ void Server::ProcessData(u8 *data, u32 datasize, u16 peer_id)
 		verbosestream<<"Server: Got TOSERVER_INIT2 from "
 				<<peer_id<<std::endl;
 
+		Player *player = m_env->getPlayer(peer_id);
+		if(!player){
+			verbosestream<<"Server: TOSERVER_INIT2: "
+					<<"Player not found; ignoring."<<std::endl;
+			return;
+		}
 
 		getClient(peer_id)->serialization_version
 				= getClient(peer_id)->pending_serialization_version;
@@ -2204,8 +2209,6 @@ void Server::ProcessData(u8 *data, u32 datasize, u16 peer_id)
 		UpdateCrafting(peer_id);
 		SendInventory(peer_id);
 		
-		Player *player = m_env->getPlayer(peer_id);
-
 		// Send HP
 		SendPlayerHP(peer_id);
 		
@@ -2956,8 +2959,13 @@ void Server::ProcessData(u8 *data, u32 datasize, u16 peer_id)
 		*/
 		if(!checkPriv(player->getName(), "interact"))
 		{
-			infostream<<"Ignoring interaction from player "<<player->getName()
-					<<" (no interact privilege)"<<std::endl;
+			actionstream<<player->getName()<<" attempted to interact with "
+					<<pointed.dump()<<" without 'interact' privilege"
+					<<std::endl;
+			// Re-send block to revert change on client-side
+			RemoteClient *client = getClient(peer_id);
+			v3s16 blockpos = getNodeBlockPos(floatToInt(pointed_pos_under, BS));
+			client->SetBlockNotSent(blockpos);
 			return;
 		}
 
@@ -3042,6 +3050,14 @@ void Server::ProcessData(u8 *data, u32 datasize, u16 peer_id)
 				}
 				if(n.getContent() != CONTENT_IGNORE)
 					scriptapi_node_on_dig(m_lua, p_under, n, playersao);
+
+				if (m_env->getMap().getNodeNoEx(p_under).getContent() != CONTENT_AIR)
+				{
+					// Re-send block to revert change on client-side
+					RemoteClient *client = getClient(peer_id);
+					v3s16 blockpos = getNodeBlockPos(floatToInt(pointed_pos_under, BS));
+					client->SetBlockNotSent(blockpos);
+				}
 			}
 		} // action == 2
 		
@@ -4323,8 +4339,12 @@ void Server::reportPrivsModified(const std::string &name)
 		if(!player)
 			return;
 		SendPlayerPrivileges(player->peer_id);
-		player->getPlayerSAO()->updatePrivileges(
-				getPlayerEffectivePrivs(name));
+		PlayerSAO *sao = player->getPlayerSAO();
+		if(!sao)
+			return;
+		sao->updatePrivileges(
+				getPlayerEffectivePrivs(name),
+				isSingleplayer());
 	}
 }
 
@@ -4409,6 +4429,10 @@ const ModSpec* Server::getModSpec(const std::string &modname)
 			return &mod;
 	}
 	return NULL;
+}
+std::string Server::getBuiltinLuaPath()
+{
+	return porting::path_share + DIR_DELIM + "builtin";
 }
 
 v3f findSpawnPos(ServerMap &map)
@@ -4524,7 +4548,8 @@ PlayerSAO* Server::emergePlayer(const char *name, u16 peer_id)
 		Create a new player active object
 	*/
 	PlayerSAO *playersao = new PlayerSAO(m_env, player, peer_id,
-			getPlayerEffectivePrivs(player->getName()));
+			getPlayerEffectivePrivs(player->getName()),
+			isSingleplayer());
 
 	/* Add object to environment */
 	m_env->addActiveObject(playersao);

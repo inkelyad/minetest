@@ -7,10 +7,15 @@ endif(${CMAKE_VERSION} STREQUAL "2.8.2")
 # This can be read from ${PROJECT_NAME} after project() is called
 project(minetest)
 
+set(VERSION_EXTRA "" CACHE STRING "Stuff to append to version string")
+
 # Also remember to set PROTOCOL_VERSION in clientserver.h when releasing
 set(VERSION_MAJOR 0)
 set(VERSION_MINOR 4)
-set(VERSION_PATCH dev-20120326)
+set(VERSION_PATCH dev-20120408)
+if(VERSION_EXTRA)
+	set(VERSION_PATCH ${VERSION_PATCH}-${VERSION_EXTRA})
+endif()
 set(VERSION_STRING "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}")
 
 MESSAGE(STATUS "*** Will build version ${VERSION_STRING} ***")
@@ -90,7 +95,7 @@ set(MINETEST_GAME_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/games/minetest_game")
 if(EXISTS ${MINETEST_GAME_SOURCE} AND IS_DIRECTORY ${MINETEST_GAME_SOURCE})
 	install(FILES ${MINETEST_GAME_SOURCE}/game.conf DESTINATION "${SHAREDIR}/games/minetest_game/")
 	install(FILES ${MINETEST_GAME_SOURCE}/README.txt DESTINATION "${SHAREDIR}/games/minetest_game/")
-	install(DIRECTORY ${MINETEST_GAME_SOURCE}/mods DESTINATION "${SHAREDIR}/games/minetest_game/")
+	install(DIRECTORY ${MINETEST_GAME_SOURCE}/mods DESTINATION "${SHAREDIR}/games/minetest_game")
 endif()
 if(BUILD_CLIENT)
 	#install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/sounds/base/pack" DESTINATION "${SHAREDIR}/sounds/base")
@@ -98,6 +103,7 @@ if(BUILD_CLIENT)
 endif()
 if(RUN_IN_PLACE)
 	install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/mods/minetest/mods_here.txt" DESTINATION "${SHAREDIR}/mods/minetest")
+	install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/textures/all/textures_here.txt" DESTINATION "${SHAREDIR}/textures/all")
 endif()
 
 install(FILES "README.txt" DESTINATION "${DOCDIR}")

@@ -915,6 +915,7 @@ static void read_object_properties(lua_State *L, int index,
 	
 	getboolfield(L, -1, "is_visible", prop->is_visible);
 	getboolfield(L, -1, "makes_footstep_sound", prop->makes_footstep_sound);
+	getfloatfield(L, -1, "automatic_rotate", prop->automatic_rotate);
 }
 
 /*
@@ -2887,6 +2888,7 @@ private:
 	int seed;
 	int octaves;
 	double persistence;
+	double scale;
 	static const char className[];
 	static const luaL_reg methods[];
 
@@ -2904,7 +2906,7 @@ private:
 	{
 		LuaPerlinNoise *o = checkobject(L, 1);
 		v2f pos2d = read_v2f(L,2);
-		lua_Number val = noise2d_perlin(pos2d.X, pos2d.Y, o->seed, o->octaves, o->persistence);
+		lua_Number val = noise2d_perlin(pos2d.X/o->scale, pos2d.Y/o->scale, o->seed, o->octaves, o->persistence);
 		lua_pushnumber(L, val);
 		return 1;
 	}
@@ -2912,16 +2914,18 @@ private:
 	{
 		LuaPerlinNoise *o = checkobject(L, 1);
 		v3f pos3d = read_v3f(L,2);
-		lua_Number val = noise3d_perlin(pos3d.X, pos3d.Y, pos3d.Z, o->seed, o->octaves, o->persistence);
+		lua_Number val = noise3d_perlin(pos3d.X/o->scale, pos3d.Y/o->scale, pos3d.Z/o->scale, o->seed, o->octaves, o->persistence);
 		lua_pushnumber(L, val);
 		return 1;
 	}
 
 public:
-	LuaPerlinNoise(int a_seed, int a_octaves, double a_persistence):
+	LuaPerlinNoise(int a_seed, int a_octaves, double a_persistence,
+			double a_scale):
 		seed(a_seed),
 		octaves(a_octaves),
-		persistence(a_persistence)
+		persistence(a_persistence),
+		scale(a_scale)
 	{
 	}
 
@@ -2929,14 +2933,15 @@ public:
 	{
 	}
 
-	// LuaPerlinNoise(seed, octaves, persistence)
+	// LuaPerlinNoise(seed, octaves, persistence, scale)
 	// Creates an LuaPerlinNoise and leaves it on top of stack
 	static int create_object(lua_State *L)
 	{
 		int seed = luaL_checkint(L, 1);
 		int octaves = luaL_checkint(L, 2);
 		double persistence = luaL_checknumber(L, 3);
-		LuaPerlinNoise *o = new LuaPerlinNoise(seed, octaves, persistence);
+		double scale = luaL_checknumber(L, 4);
+		LuaPerlinNoise *o = new LuaPerlinNoise(seed, octaves, persistence, scale);
 		*(void **)(lua_newuserdata(L, sizeof(void *))) = o;
 		luaL_getmetatable(L, className);
 		lua_setmetatable(L, -2);
@@ -2997,6 +3002,12 @@ private:
 
 	static const char className[];
 	static const luaL_reg methods[];
+
+	static int gc_object(lua_State *L) {
+		EnvRef *o = *(EnvRef **)(lua_touserdata(L, 1));
+		delete o;
+		return 0;
+	}
 
 	static EnvRef *checkobject(lua_State *L, int narg)
 	{
@@ -3152,7 +3163,21 @@ private:
 		ItemStack item = read_item(L, 3);
 		if(item.empty() || !item.isKnown(get_server(L)->idef()))
 			return 0;
-		// Do it
+		// Use minetest.spawn_item to spawn a __builtin:item
+		lua_getglobal(L, "minetest");
+		lua_getfield(L, -1, "spawn_item");
+		if(lua_isnil(L, -1))
+			return 0;
+		lua_pushvalue(L, 2);
+		lua_pushstring(L, item.getItemString().c_str());
+		if(lua_pcall(L, 2, 1, 0))
+			script_error(L, "error: %s", lua_tostring(L, -1));
+		return 1;
+		/*lua_pushvalue(L, 1);
+		lua_pushstring(L, "__builtin:item");
+		lua_pushstring(L, item.getItemString().c_str());
+		return l_add_entity(L);*/
+		/*// Do it
 		ServerActiveObject *obj = createItemSAO(env, pos, item.getItemString());
 		int objectid = env->addActiveObject(obj);
 		// If failed to add, return nothing (reads as nil)
@@ -3160,7 +3185,7 @@ private:
 			return 0;
 		// Return ObjectRef
 		objectref_get_or_create(L, obj);
-		return 1;
+		return 1;*/
 	}
 
 	// EnvRef:add_rat(pos)
@@ -3280,9 +3305,99 @@ private:
 	}
 
 
-	//	EnvRef:get_perlinnoise(seeddiff, octaves, persistence)
+	// EnvRef:find_node_near(pos, radius, nodenames) -> pos or nil
+	// nodenames: eg. {"ignore", "group:tree"} or "default:dirt"
+	static int l_find_node_near(lua_State *L)
+	{
+		EnvRef *o = checkobject(L, 1);
+		ServerEnvironment *env = o->m_env;
+		if(env == NULL) return 0;
+		INodeDefManager *ndef = get_server(L)->ndef();
+		v3s16 pos = read_v3s16(L, 2);
+		int radius = luaL_checkinteger(L, 3);
+		std::set<content_t> filter;
+		if(lua_istable(L, 4)){
+			int table = 4;
+			lua_pushnil(L);
+			while(lua_next(L, table) != 0){
+				// key at index -2 and value at index -1
+				luaL_checktype(L, -1, LUA_TSTRING);
+				ndef->getIds(lua_tostring(L, -1), filter);
+				// removes value, keeps key for next iteration
+				lua_pop(L, 1);
+			}
+		} else if(lua_isstring(L, 4)){
+			ndef->getIds(lua_tostring(L, 4), filter);
+		}
+
+		for(int d=1; d<=radius; d++){
+			core::list<v3s16> list;
+			getFacePositions(list, d);
+			for(core::list<v3s16>::Iterator i = list.begin();
+					i != list.end(); i++){
+				v3s16 p = pos + (*i);
+				content_t c = env->getMap().getNodeNoEx(p).getContent();
+				if(filter.count(c) != 0){
+					push_v3s16(L, p);
+					return 1;
+				}
+			}
+		}
+		return 0;
+	}
+
+	// EnvRef:find_nodes_in_area(minp, maxp, nodenames) -> list of positions
+	// nodenames: eg. {"ignore", "group:tree"} or "default:dirt"
+	static int l_find_nodes_in_area(lua_State *L)
+	{
+		EnvRef *o = checkobject(L, 1);
+		ServerEnvironment *env = o->m_env;
+		if(env == NULL) return 0;
+		INodeDefManager *ndef = get_server(L)->ndef();
+		v3s16 minp = read_v3s16(L, 2);
+		v3s16 maxp = read_v3s16(L, 3);
+		std::set<content_t> filter;
+		if(lua_istable(L, 4)){
+			int table = 4;
+			lua_pushnil(L);
+			while(lua_next(L, table) != 0){
+				// key at index -2 and value at index -1
+				luaL_checktype(L, -1, LUA_TSTRING);
+				ndef->getIds(lua_tostring(L, -1), filter);
+				// removes value, keeps key for next iteration
+				lua_pop(L, 1);
+			}
+		} else if(lua_isstring(L, 4)){
+			ndef->getIds(lua_tostring(L, 4), filter);
+		}
+
+		// Get the table insert function
+		lua_getglobal(L, "table");
+		lua_getfield(L, -1, "insert");
+		int table_insert = lua_gettop(L);
+		
+		lua_newtable(L);
+		int table = lua_gettop(L);
+		for(s16 x=minp.X; x<=maxp.X; x++)
+		for(s16 y=minp.Y; y<=maxp.Y; y++)
+		for(s16 z=minp.Z; z<=maxp.Z; z++)
+		{
+			v3s16 p(x,y,z);
+			content_t c = env->getMap().getNodeNoEx(p).getContent();
+			if(filter.count(c) != 0){
+				lua_pushvalue(L, table_insert);
+				lua_pushvalue(L, table);
+				push_v3s16(L, p);
+				if(lua_pcall(L, 2, 0, 0))
+					script_error(L, "error: %s", lua_tostring(L, -1));
+			}
+		}
+		return 1;
+	}
+
+	//	EnvRef:get_perlin(seeddiff, octaves, persistence, scale)
 	//  returns world-specific PerlinNoise
-	static int l_get_perlinnoise(lua_State *L)
+	static int l_get_perlin(lua_State *L)
 	{
 		EnvRef *o = checkobject(L, 1);
 		ServerEnvironment *env = o->m_env;
@@ -3291,18 +3406,13 @@ private:
 		int seeddiff = luaL_checkint(L, 2);
 		int octaves = luaL_checkint(L, 3);
 		double persistence = luaL_checknumber(L, 4);
+		double scale = luaL_checknumber(L, 5);
 
-		LuaPerlinNoise *n = new LuaPerlinNoise(seeddiff + int(env->getServerMap().getSeed()), octaves, persistence);
+		LuaPerlinNoise *n = new LuaPerlinNoise(seeddiff + int(env->getServerMap().getSeed()), octaves, persistence, scale);
 		*(void **)(lua_newuserdata(L, sizeof(void *))) = n;
 		luaL_getmetatable(L, "PerlinNoise");
 		lua_setmetatable(L, -2);
 		return 1;
-	}
-
-	static int gc_object(lua_State *L) {
-		EnvRef *o = *(EnvRef **)(lua_touserdata(L, 1));
-		delete o;
-		return 0;
 	}
 
 public:
@@ -3379,7 +3489,9 @@ const luaL_reg EnvRef::methods[] = {
 	method(EnvRef, get_objects_inside_radius),
 	method(EnvRef, set_timeofday),
 	method(EnvRef, get_timeofday),
-	method(EnvRef, get_perlinnoise),
+	method(EnvRef, find_node_near),
+	method(EnvRef, find_nodes_in_area),
+	method(EnvRef, get_perlin),
 	{0,0}
 };
 
@@ -3934,6 +4046,15 @@ static int l_register_craft(lua_State *L)
 	return 0; /* number of results */
 }
 
+// setting_set(name, value)
+static int l_setting_set(lua_State *L)
+{
+	const char *name = luaL_checkstring(L, 1);
+	const char *value = luaL_checkstring(L, 2);
+	g_settings->set(name, value);
+	return 0;
+}
+
 // setting_get(name)
 static int l_setting_get(lua_State *L)
 {
@@ -4062,8 +4183,13 @@ static int l_get_current_modname(lua_State *L)
 // get_modpath(modname)
 static int l_get_modpath(lua_State *L)
 {
-	const char *modname = luaL_checkstring(L, 1);
+	std::string modname = luaL_checkstring(L, 1);
 	// Do it
+	if(modname == "__builtin"){
+		std::string path = get_server(L)->getBuiltinLuaPath();
+		lua_pushstring(L, path.c_str());
+		return 1;
+	}
 	const ModSpec *mod = get_server(L)->getModSpec(modname);
 	if(!mod){
 		lua_pushnil(L);
@@ -4135,6 +4261,7 @@ static const struct luaL_Reg minetest_f [] = {
 	{"register_item_raw", l_register_item_raw},
 	{"register_alias_raw", l_register_alias_raw},
 	{"register_craft", l_register_craft},
+	{"setting_set", l_setting_set},
 	{"setting_get", l_setting_get},
 	{"setting_getbool", l_setting_getbool},
 	{"chat_send_all", l_chat_send_all},
